@@ -16,10 +16,17 @@ import {
   Package
 } from 'lucide-react';
 import Container from '../components/common/Container';
+import { useCart } from '../contexts/CartContext';
+import { useAuth } from '../contexts/AuthContext';
+import CartIcon from '../components/cart/CartIcon';
+import CartDrawer from '../components/cart/CartDrawer';
+import AddToCartButton from '../components/cart/AddToCartButton';
 
 const StorePage = () => {
   const { storeId } = useParams();
   const navigate = useNavigate();
+  const { addToCart } = useCart();
+  const { isAuthenticated, loading: authLoading } = useAuth();
   
   const [store, setStore] = useState(null);
   const [products, setProducts] = useState([]);
@@ -29,6 +36,71 @@ const StorePage = () => {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [isProductDetailOpen, setIsProductDetailOpen] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  const [isCartOpen, setIsCartOpen] = useState(false);
+  
+  // Écouter l'événement d'ajout d'élément en attente
+  useEffect(() => {
+    const handleAddPendingCartItem = (event) => {
+      const { product, quantity, storeInfo } = event.detail;
+      addToCart(product, quantity, storeInfo);
+    };
+
+    window.addEventListener('addPendingCartItem', handleAddPendingCartItem);
+    return () => {
+      window.removeEventListener('addPendingCartItem', handleAddPendingCartItem);
+    };
+  }, [addToCart]);
+  
+  // Fonction pour vérifier l'authentification avant d'ajouter au panier
+  const checkAuthAndAddToCart = async (product, quantity = 1, storeInfo) => {
+    if (!isAuthenticated) {
+      // Sauvegarder l'intention d'ajout au panier dans sessionStorage
+      sessionStorage.setItem('pendingCartItem', JSON.stringify({
+        product,
+        quantity,
+        storeInfo,
+        returnUrl: window.location.href
+      }));
+      
+      // Rediriger vers la page de connexion
+      navigate('/auth/login');
+      return;
+    }
+    
+    // Si authentifié, ajouter au panier normalement
+    try {
+      addToCart(product, quantity, storeInfo);
+      console.log('Produit ajouté au panier:', product.name);
+    } catch (error) {
+      console.error('Erreur lors de l\'ajout au panier:', error);
+    }
+  };
+  
+  // Fonction pour enregistrer une visite
+  const recordStoreView = async (boutique) => {
+    try {
+      const response = await fetch(`/api/boutiques/${boutique.slug}/record-view`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        credentials: 'same-origin'
+      });
+      
+      const result = await response.json();
+      
+      if (result.success && result.view_recorded) {
+        console.log('Vue enregistrée avec succès');
+        setStore(prev => prev ? {
+          ...prev,
+          visitCount: prev.visitCount + 1
+        } : prev);
+      }
+    } catch (error) {
+      console.error('Erreur lors de l\'enregistrement de la vue:', error);
+    }
+  };
   
   useEffect(() => {
     const fetchStore = async () => {
@@ -40,28 +112,25 @@ const StorePage = () => {
       try {
         let storeData;
         
-        // Essayer d'abord par slug, puis par ID
         try {
           const response = await BoutiqueService.getBoutiqueBySlug(storeId);
           storeData = response.data;
         } catch (slugError) {
-          // Si la recherche par slug échoue, essayer par ID
           const response = await BoutiqueService.getBoutiqueById(storeId);
           storeData = response.data;
         }
         
         if (storeData) {
-          // Adapter les données de l'API au format attendu par le composant
           const adaptedStore = {
             id: storeData.id,
             name: storeData.nom,
             slug: storeData.slug,
             slogan: storeData.slogan || "Bienvenue dans notre boutique",
             description: storeData.description,
-            type: storeData.categorie, // 'physical' ou 'digital'
+            type: storeData.categorie,
             accentColor: storeData.couleur_accent || '#F25539',
             logo: storeData.logo ? BoutiqueService.getLogoUrl(storeData.logo) : null,
-            visitCount: Math.floor(Math.random() * 1000) + 100, // À remplacer par les vraies données
+            visitCount: Math.floor(Math.random() * 1000) + 100,
             owner: storeData.user ? {
               name: storeData.user.name,
               email: storeData.user.email
@@ -72,11 +141,9 @@ const StorePage = () => {
           };
           
           setStore(adaptedStore);
-          
-          // Charger les produits après avoir récupéré la boutique
+          await recordStoreView(adaptedStore);
           await fetchProducts(adaptedStore.id);
           
-          // Vérifier s'il y a un paramètre produit dans l'URL
           const urlParams = new URLSearchParams(window.location.search);
           const productId = urlParams.get('product');
           
@@ -105,10 +172,9 @@ const StorePage = () => {
       const response = await ProduitService.getAllProduits(boutiqueId);
       
       if (response.success) {
-        // Convertir les données Laravel vers le format React et filtrer les produits visibles
         const convertedProducts = response.data
           .map(product => ProduitService.convertToReactFormat(product))
-          .filter(product => product.isVisible); // Ne montrer que les produits visibles
+          .filter(product => product.isVisible);
         
         setProducts(convertedProducts);
       } else {
@@ -123,7 +189,6 @@ const StorePage = () => {
     }
   };
 
-  // Effet pour gérer l'ouverture d'un produit via l'URL
   useEffect(() => {
     if (products.length > 0) {
       const urlParams = new URLSearchParams(window.location.search);
@@ -144,7 +209,6 @@ const StorePage = () => {
     setCurrentImageIndex(0);
     setIsProductDetailOpen(true);
     
-    // Mettre à jour l'URL sans naviguer
     const url = new URL(window.location.href);
     url.searchParams.set('product', product.id);
     window.history.pushState({}, '', url);
@@ -153,7 +217,6 @@ const StorePage = () => {
   const closeProductDetail = () => {
     setIsProductDetailOpen(false);
     
-    // Supprimer le produit de l'URL
     const url = new URL(window.location.href);
     url.searchParams.delete('product');
     window.history.pushState({}, '', url);
@@ -179,17 +242,26 @@ const StorePage = () => {
         url: window.location.href,
       }).catch(console.error);
     } else {
-      // Fallback: copier l'URL dans le presse-papiers
       navigator.clipboard.writeText(window.location.href).then(() => {
-        // Vous pouvez ajouter une notification ici
         alert('Lien copié dans le presse-papiers !');
+      });
+    }
+  };
+
+  const handleQuickAddToCart = async (product, event) => {
+    event.stopPropagation();
+    if (store && (product.isDigital || (!product.isDigital && product.inStock > 0))) {
+      await checkAuthAndAddToCart(product, 1, {
+        id: store.id,
+        name: store.name,
+        slug: store.slug,
+        accentColor: store.accentColor
       });
     }
   };
 
   const getImageUrl = (imagePath) => {
     if (!imagePath) return null;
-    // Utiliser le service pour obtenir l'URL de l'image
     return ProduitService.getImageUrl(imagePath);
   };
 
@@ -204,7 +276,7 @@ const StorePage = () => {
   };
 
   // État de chargement
-  if (loading) {
+  if (loading || authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
@@ -236,6 +308,20 @@ const StorePage = () => {
   
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Icône du panier flottante */}
+      <div className="fixed top-4 right-4 z-30">
+        <CartIcon 
+          onClick={() => setIsCartOpen(true)}
+          className="bg-white shadow-lg"
+        />
+      </div>
+
+      {/* Drawer du panier */}
+      <CartDrawer 
+        isOpen={isCartOpen} 
+        onClose={() => setIsCartOpen(false)} 
+      />
+
       {/* En-tête de la boutique */}
       <div 
         className="bg-gray-900 text-white py-10"
@@ -339,10 +425,12 @@ const StorePage = () => {
             {products.map((product) => (
               <div 
                 key={product.id} 
-                className="bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                onClick={() => openProductDetail(product)}
+                className="bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow group"
               >
-                <div className="h-48 bg-gray-200 relative">
+                <div 
+                  className="h-48 bg-gray-200 relative cursor-pointer"
+                  onClick={() => openProductDetail(product)}
+                >
                   {product.images && product.images.length > 0 && product.images[0] ? (
                     <img
                       src={getImageUrl(product.images[0])}
@@ -368,10 +456,28 @@ const StorePage = () => {
                       </span>
                     </div>
                   )}
+
+                  {/* Bouton d'ajout rapide au panier */}
+                  <button 
+                    onClick={(e) => handleQuickAddToCart(product, e)}
+                    disabled={!product.isDigital && product.inStock <= 0}
+                    className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ 
+                      backgroundColor: (!product.isDigital && product.inStock <= 0) ? '#ef4444' : store.accentColor,
+                      color: 'white'
+                    }}
+                  >
+                    <ShoppingCart size={16} />
+                  </button>
                 </div>
                 
                 <div className="p-4">
-                  <h3 className="font-medium text-gray-900 mb-1 truncate">{product.name}</h3>
+                  <h3 
+                    className="font-medium text-gray-900 mb-1 truncate cursor-pointer hover:text-orange-500"
+                    onClick={() => openProductDetail(product)}
+                  >
+                    {product.name}
+                  </h3>
                   <p className="text-sm text-gray-500 h-10 overflow-hidden">
                     {product.description && product.description.length > 60 
                       ? `${product.description.substring(0, 60)}...`
@@ -390,12 +496,29 @@ const StorePage = () => {
                     <span className="font-bold text-gray-900">
                       {parseFloat(product.price || 0).toLocaleString()} FCFA
                     </span>
-                    <button 
-                      className="w-8 h-8 rounded-full flex items-center justify-center"
-                      style={{ backgroundColor: store.accentColor }}
-                    >
-                      <ShoppingCart size={16} className="text-white" />
-                    </button>
+                    
+                    {!product.isDigital && product.inStock <= 5 && product.inStock > 0 && (
+                      <span className="text-xs text-amber-600 font-medium">
+                        Plus que {product.inStock}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Utilisation du composant AddToCartButton */}
+                  <div className="mt-3">
+                    <AddToCartButton
+                      product={product}
+                      storeInfo={{
+                        id: store.id,
+                        name: store.name,
+                        slug: store.slug,
+                        accentColor: store.accentColor
+                      }}
+                      quantity={1}
+                      fullWidth={true}
+                      size="sm"
+                      disabled={!product.isDigital && product.inStock <= 0}
+                    />
                   </div>
                 </div>
               </div>
@@ -583,17 +706,21 @@ const StorePage = () => {
                 
                 <div className="mt-6 flex-grow"></div>
                 
+                {/* Utilisation du composant AddToCartButton dans le modal */}
                 <div className="mt-4">
-                  <Button
-                    variant="primary"
-                    fullWidth
-                    style={{ backgroundColor: store.accentColor }}
-                    icon={<ShoppingCart size={16} />}
-                    iconPosition="left"
+                  <AddToCartButton
+                    product={selectedProduct}
+                    storeInfo={{
+                      id: store.id,
+                      name: store.name,
+                      slug: store.slug,
+                      accentColor: store.accentColor
+                    }}
+                    quantity={1}
+                    fullWidth={true}
+                    size="lg"
                     disabled={!selectedProduct.isDigital && selectedProduct.inStock <= 0}
-                  >
-                    {selectedProduct.isDigital ? 'Acheter maintenant' : 'Ajouter au panier'}
-                  </Button>
+                  />
                 </div>
               </div>
             </div>

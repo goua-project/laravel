@@ -10,33 +10,36 @@ import AddProductPage from './pages/AddProductPage';
 import CheckoutPage from './components/checkout/CheckoutPage';
 import { AuthProvider } from './contexts/AuthContext';
 import { StoreProvider } from './contexts/StoreContext';
+import { CartProvider } from './contexts/CartContext';
 import ProductsList from './components/dashboard/ProductsList';
 import FeaturedStores from './components/landing/FeaturedStores';
+import CartPage from './pages/CartPage';
 
 function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
         <StoreProvider>
-          <div className="flex flex-col min-h-screen bg-gray-50">
-            <Navbar />
-            <main className="flex-grow">
-              <Routes>
-                <Route path="/" element={<LandingPage />} />
-                <Route path="/auth/:authType" element={<AuthPage />} />
-                <Route path="/create-store" element={<CreateStorePage />} />
-                <Route path="/dashboard/*" element={<DashboardPage />} />
-                <Route path="/store/:storeId" element={<StorePage />} />
-                <Route path="/add-product" element={<AddProductPage />} />
-                <Route path="/checkout/:storeId" element={<CheckoutPage />} />
-                <Route path="/dashboard/products" element={<ProductsList />} />
-                <Route path="/featured-stores" element={<FeaturedStores />} />
-                
-
-              </Routes>
-            </main>
-            <Footer />
-          </div>
+          <CartProvider>
+            <div className="flex flex-col min-h-screen bg-gray-50">
+              <Navbar />
+              <main className="flex-grow">
+                <Routes>
+                  <Route path="/" element={<LandingPage />} />
+                  <Route path="/auth/:authType" element={<AuthPage />} />
+                  <Route path="/create-store" element={<CreateStorePage />} />
+                  <Route path="/dashboard/*" element={<DashboardPage />} />
+                  <Route path="/store/:storeId" element={<StorePage />} />
+                  <Route path="/cart" element={<CartPage />} />
+                  <Route path="/add-product" element={<AddProductPage />} />
+                  <Route path="/checkout/:storeId" element={<CheckoutPage />} />
+                  <Route path="/dashboard/products" element={<ProductsList />} />
+                  <Route path="/featured-stores" element={<FeaturedStores />} />
+                </Routes>
+              </main>
+              <Footer />
+            </div>
+          </CartProvider>
         </StoreProvider>
       </AuthProvider>
     </BrowserRouter>

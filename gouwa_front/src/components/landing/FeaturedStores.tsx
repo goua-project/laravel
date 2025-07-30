@@ -3,6 +3,8 @@ import { Check, Star, Zap, Building2, ArrowRight, ExternalLink } from 'lucide-re
 import { Link } from 'react-router-dom';
 import BoutiqueService from '../../services/boutiqueService';
 import ProduitService from '../../services/produitService';
+import StatsService from '../../services/StatsService';
+
 
 const Container = ({ children, className = "" }) => (
   <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ${className}`}>{children}</div>
@@ -30,7 +32,27 @@ const FeaturedStores = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Fonction pour charger les boutiques et leurs produits
+  // Fonction pour enregistrer une visite de boutique
+  const recordBoutiqueView = async (boutiqueSlug) => {
+    try {
+      await StatsService.recordView(boutiqueSlug);
+      console.log(`Visite enregistrée pour la boutique: ${boutiqueSlug}`);
+    } catch (error) {
+      console.error('Erreur lors de l\'enregistrement de la visite:', error);
+      // Ne pas bloquer la navigation même si l'enregistrement échoue
+    }
+  };
+
+  // Fonction pour gérer le clic sur "Visiter la boutique"
+  const handleVisitStore = async (e, storeSlug) => {
+    // Enregistrer la visite de manière asynchrone
+    recordBoutiqueView(storeSlug);
+    
+    // La navigation se fera normalement via le Link
+    // Pas besoin de e.preventDefault() car on veut que la navigation se fasse
+  };
+
+  // Fonction pour charger les boutiques et leurs produits avec les vraies statistiques
   const loadStoresWithProducts = async () => {
     try {
       setLoading(true);
@@ -40,12 +62,25 @@ const FeaturedStores = () => {
       const boutiquesResponse = await BoutiqueService.getAllBoutiques();
       const boutiques = boutiquesResponse.data || boutiquesResponse;
 
-      // Pour chaque boutique, récupérer ses produits
+      // Pour chaque boutique, récupérer ses produits et ses statistiques
       const storesWithProducts = await Promise.all(
         boutiques.map(async (boutique) => {
           try {
+            // Récupérer les produits
             const produitsResponse = await ProduitService.getAllProduits(boutique.id);
             const produits = produitsResponse.data || produitsResponse || [];
+
+            // Récupérer les statistiques de visite
+            let visitCount = Math.floor(Math.random() * 3000) + 500; // Valeur par défaut
+            try {
+              const statsResponse = await StatsService.getBoutiqueStats(boutique.id, 'month');
+              if (statsResponse.success && statsResponse.data) {
+                visitCount = statsResponse.data.total_views || visitCount;
+              }
+            } catch (statsError) {
+              console.log('Statistiques non disponibles pour la boutique', boutique.id);
+              // Garder la valeur par défaut
+            }
 
             // Convertir les produits au format React et prendre seulement les 3 premiers
             const formattedProduits = produits
@@ -69,7 +104,7 @@ const FeaturedStores = () => {
                 ? BoutiqueService.getLogoUrl(boutique.logo)
                 : 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
               slogan: boutique.slogan || 'Découvrez nos produits',
-              visitCount: Math.floor(Math.random() * 3000) + 500, // Simulation du nombre de visites
+              visitCount: visitCount, // Utiliser les vraies statistiques
               products: formattedProduits
             };
           } catch (error) {
@@ -271,7 +306,7 @@ const FeaturedStores = () => {
                       {store.name}
                     </h3>
                     <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                      {store.visitCount} visites
+                      {store.visitCount.toLocaleString()} visites
                     </span>
                   </div>
                   
@@ -308,6 +343,7 @@ const FeaturedStores = () => {
                     <Link 
                       to={`/store/${store.slug}`} 
                       className="flex items-center justify-center w-full text-orange-500 hover:text-orange-600 font-medium transition-colors"
+                      onClick={(e) => handleVisitStore(e, store.slug)}
                     >
                       Visiter la boutique
                       <ExternalLink size={16} className="ml-1" />

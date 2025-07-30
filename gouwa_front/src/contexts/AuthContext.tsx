@@ -18,6 +18,33 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
+  // Fonction pour traiter les éléments en attente dans le panier
+  const handlePendingCartItems = async () => {
+    const pendingCartItem = sessionStorage.getItem('pendingCartItem');
+    if (pendingCartItem) {
+      try {
+        const { product, quantity, storeInfo } = JSON.parse(pendingCartItem);
+        
+        // Dynamically import the CartContext to avoid circular dependencies
+        const { useCart } = await import('./CartContext');
+        
+        // Note: We can't use useCart hook here as we're not in a component
+        // Instead, we'll dispatch a custom event that components can listen to
+        const event = new CustomEvent('addPendingCartItem', {
+          detail: { product, quantity, storeInfo }
+        });
+        window.dispatchEvent(event);
+        
+        sessionStorage.removeItem('pendingCartItem');
+        console.log('Produit ajouté au panier après connexion');
+        
+      } catch (error) {
+        console.error('Erreur lors de l\'ajout du produit en attente:', error);
+        sessionStorage.removeItem('pendingCartItem');
+      }
+    }
+  };
+
   // Vérifier l'authentification au chargement
   useEffect(() => {
     const checkAuth = async () => {
@@ -26,6 +53,9 @@ export const AuthProvider = ({ children }) => {
           const response = await apiService.getCurrentUser();
           setUser(response.user);
           setIsAuthenticated(true);
+          
+          // Traiter les éléments en attente après vérification de l'auth
+          await handlePendingCartItems();
         }
       } catch (error) {
         console.error('Erreur lors de la vérification de l\'authentification:', error);
@@ -46,6 +76,10 @@ export const AuthProvider = ({ children }) => {
       const response = await apiService.login(email, password);
       setUser(response.user);
       setIsAuthenticated(true);
+      
+      // Traiter les éléments en attente après connexion réussie
+      await handlePendingCartItems();
+      
       return response;
     } catch (error) {
       // Propager l'erreur telle quelle pour préserver les détails de validation
@@ -58,6 +92,10 @@ export const AuthProvider = ({ children }) => {
       const response = await apiService.register(userData);
       setUser(response.user);
       setIsAuthenticated(true);
+      
+      // Traiter les éléments en attente après inscription réussie
+      await handlePendingCartItems();
+      
       return response;
     } catch (error) {
       // Propager l'erreur telle quelle pour préserver les détails de validation
@@ -71,8 +109,37 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Erreur lors de la déconnexion:', error);
     } finally {
+      // Nettoyer les éléments en attente lors de la déconnexion
+      sessionStorage.removeItem('pendingCartItem');
       setUser(null);
       setIsAuthenticated(false);
+    }
+  };
+
+  // Fonction pour vérifier si un élément est en attente
+  const hasPendingCartItem = () => {
+    return sessionStorage.getItem('pendingCartItem') !== null;
+  };
+
+  // Fonction pour obtenir l'élément en attente
+  const getPendingCartItem = () => {
+    const pendingItem = sessionStorage.getItem('pendingCartItem');
+    return pendingItem ? JSON.parse(pendingItem) : null;
+  };
+
+  // Fonction pour supprimer l'élément en attente
+  const clearPendingCartItem = () => {
+    sessionStorage.removeItem('pendingCartItem');
+  };
+
+  // Fonction pour mettre à jour le profil utilisateur
+  const updateProfile = async (profileData) => {
+    try {
+      const response = await apiService.updateProfile(profileData);
+      setUser(response.user);
+      return response;
+    } catch (error) {
+      throw error;
     }
   };
 
@@ -83,6 +150,11 @@ export const AuthProvider = ({ children }) => {
     login,
     register,
     logout,
+    updateProfile,
+    handlePendingCartItems,
+    hasPendingCartItem,
+    getPendingCartItem,
+    clearPendingCartItem,
   };
 
   return (

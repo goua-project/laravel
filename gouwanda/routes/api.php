@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\BoutiqueController;
 use App\Http\Controllers\Api\ProduitController;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\BoutiqueStatsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -77,4 +78,27 @@ Route::prefix('boutiques/{boutique}')->group(function () {
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('my-produits', [ProduitController::class, 'myProduits']);
     Route::get('produits/search', [ProduitController::class, 'search']);
+});
+
+
+
+// Routes protégées par authentification
+Route::middleware(['auth:sanctum'])->group(function () {
+    
+    // Statistiques des boutiques de l'utilisateur
+    Route::get('/boutiques/stats', [BoutiqueStatsController::class, 'getAllBoutiquesStats']);
+    
+    // Statistiques d'une boutique spécifique
+    Route::get('/boutiques/{boutiqueId}/stats', [BoutiqueStatsController::class, 'getViewStats']);
+    
+    // Statistiques simplifiées pour le dashboard
+    Route::get('/boutiques/{boutiqueId}/dashboard-stats', [BoutiqueStatsController::class, 'getDashboardStats']);
+});
+
+// Routes publiques
+Route::group(['prefix' => 'public'], function () {
+    
+    // Enregistrer une vue de boutique (appelé depuis le frontend public)
+    Route::post('/boutiques/{boutiqueSlug}/view', [BoutiqueStatsController::class, 'recordView']);
+    
 });

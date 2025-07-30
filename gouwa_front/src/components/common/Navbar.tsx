@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { ShoppingBag, Menu, X, Search, User, ShoppingCart } from 'lucide-react';
 import Button from './Button';
 import { useAuth } from '../../contexts/AuthContext';
+import { useCart } from '../../contexts/CartContext';
 import BoutiqueService from '../../services/BoutiqueService';
 
 const Navbar = () => {
@@ -11,7 +12,10 @@ const Navbar = () => {
   const [hasBoutique, setHasBoutique] = useState(false);
   const [loading, setLoading] = useState(true);
   const { user, isAuthenticated, logout } = useAuth();
+  const { getCartItemCount } = useCart(); // Changé de getTotalItems à getCartItemCount
   const navigate = useNavigate();
+
+  const totalCartItems = getCartItemCount(); // Changé de getTotalItems à getCartItemCount
 
   useEffect(() => {
     const checkUserBoutique = async () => {
@@ -37,7 +41,7 @@ const Navbar = () => {
     setIsMenuOpen(!isMenuOpen);
   };
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = (e) => {
     e.preventDefault();
     // Implement search functionality
     console.log('Searching for:', searchQuery);
@@ -92,6 +96,19 @@ const Navbar = () => {
                 Créer une boutique
               </Link>
             )}
+
+            {/* Cart Icon */}
+            <Link 
+              to="/cart" 
+              className="relative p-2 text-gray-700 hover:text-orange-500 transition-colors duration-200"
+            >
+              <ShoppingCart className="h-6 w-6" />
+              {totalCartItems > 0 && (
+                <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium">
+                  {totalCartItems > 99 ? '99+' : totalCartItems}
+                </span>
+              )}
+            </Link>
             
             {isAuthenticated ? (
               <div className="relative ml-3 flex items-center">
@@ -129,8 +146,21 @@ const Navbar = () => {
             )}
           </div>
 
-          {/* Mobile menu button */}
-          <div className="flex items-center md:hidden">
+          {/* Mobile menu button and cart */}
+          <div className="flex items-center md:hidden space-x-2">
+            {/* Mobile Cart Icon */}
+            <Link 
+              to="/cart" 
+              className="relative p-2 text-gray-700 hover:text-orange-500 transition-colors duration-200"
+            >
+              <ShoppingCart className="h-6 w-6" />
+              {totalCartItems > 0 && (
+                <span className="absolute -top-1 -right-1 bg-orange-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center font-medium">
+                  {totalCartItems > 99 ? '99+' : totalCartItems}
+                </span>
+              )}
+            </Link>
+
             <button
               onClick={toggleMenu}
               className="inline-flex items-center justify-center p-2 rounded-md text-gray-700 hover:text-orange-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-orange-500"
@@ -166,11 +196,26 @@ const Navbar = () => {
           </form>
 
           <Link
-            to="/"
+            to="/featured-stores"
             className="block px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-orange-500 hover:bg-gray-50"
             onClick={() => setIsMenuOpen(false)}
           >
             Explorer
+          </Link>
+
+          {/* Mobile Cart Link */}
+          <Link
+            to="/cart"
+            className="flex items-center px-3 py-2 rounded-md text-base font-medium text-gray-700 hover:text-orange-500 hover:bg-gray-50"
+            onClick={() => setIsMenuOpen(false)}
+          >
+            <ShoppingCart className="h-5 w-5 mr-2" />
+            Panier
+            {totalCartItems > 0 && (
+              <span className="ml-2 bg-orange-500 text-white text-xs rounded-full px-2 py-1 font-medium">
+                {totalCartItems}
+              </span>
+            )}
           </Link>
           
           {isAuthenticated && !hasBoutique && (
