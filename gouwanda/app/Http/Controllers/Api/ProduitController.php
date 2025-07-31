@@ -27,6 +27,21 @@ class ProduitController extends Controller
                 ], 403);
             }
 
+            // Vérifier la limite de produits selon l'abonnement
+            $abonnement = $boutique->abonnementActif();
+            
+            if ($abonnement && isset($abonnement->plan) && $abonnement->plan->limite_produits !== null) {
+                $nombreProduits = $boutique->produits()->published()->count();
+                
+                if ($nombreProduits >= $abonnement->plan->limite_produits) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Vous avez atteint la limite de produits autorisée par votre abonnement ({$abonnement->plan->limite_produits} produits). Veuillez mettre à jour votre plan pour ajouter plus de produits.",
+                        'requiresUpgrade' => true
+                    ], 403);
+                }
+            }
+
             // Debug des données reçues
             Log::info('Debug création produit', [
                 'boutique_id_requested' => $boutiqueId,
@@ -151,7 +166,16 @@ class ProduitController extends Controller
                 'images' => json_encode($imagePaths), 
             ]);
 
-            Log::info('Produit créé avec succès', ['produit_id' => $produit->id]);
+            // Vérifier si le produit peut être publié
+            if ($request->input('is_published', false)) {
+                if (!$produit->canBePublished()) {
+                    $produit->update(['is_published' => false]);
+                    Log::warning('Le produit ne peut pas être publié selon les limites de l\'abonnement', [
+                        'produit_id' => $produit->id,
+                        'boutique_id' => $boutique->id
+                    ]);
+                }
+            }
 
             return response()->json([
                 'success' => true,
@@ -162,14 +186,61 @@ class ProduitController extends Controller
         } catch (\Exception $e) {
             Log::error('Erreur lors de la création du produit', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'line' => $e->getLine(),
-                'file' => $e->getFile()
+                'trace' => $e->getTraceAsString()
             ]);
 
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur interne du serveur: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    // MÉTHODE MANQUANTE - Ajouter cette route
+    public function checkLimits($boutiqueId)
+    {
+        try {
+            $boutique = Boutique::findOrFail($boutiqueId);
+            
+            if ($boutique->user_id !== Auth::id()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Non autorisé'
+                ], 403);
+            }
+
+            $abonnement = $boutique->abonnementActif();
+            $currentCount = $boutique->produits()->count();
+            
+            // Gestion sécurisée de l'abonnement et du plan
+            $limit = null;
+            $planName = 'Gratuit';
+            
+            if ($abonnement && isset($abonnement->plan)) {
+                $limit = $abonnement->plan->limite_produits;
+                $planName = $abonnement->plan->nom ?? 'Plan Actuel';
+            } else {
+                // Limite par défaut pour le plan gratuit
+                $limit = 3;
+            }
+
+            return response()->json([
+                'success' => true,
+                'currentCount' => $currentCount,
+                'limit' => $limit,
+                'canAddMore' => $limit === null || $currentCount < $limit,
+                'planName' => $planName
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de la vérification des limites', [
+                'error' => $e->getMessage(),
+                'boutique_id' => $boutiqueId
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la vérification des limites'
             ], 500);
         }
     }
@@ -239,6 +310,17 @@ class ProduitController extends Controller
             }
 
             $produit = $boutique->produits()->findOrFail($produitId);
+
+            // Vérifier la publication si elle est modifiée
+            if ($request->has('is_published') && $request->input('is_published')) {
+                if (!$produit->canBePublished()) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Vous avez atteint la limite de produits publiés autorisée par votre abonnement. Veuillez mettre à jour votre plan ou désactiver d\'autres produits.',
+                        'requiresUpgrade' => true
+                    ], 403);
+                }
+            }
 
             // Même validation que pour store
             $rules = [

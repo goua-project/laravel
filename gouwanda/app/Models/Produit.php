@@ -38,9 +38,9 @@ class Produit extends Model
      * Les attributs qui doivent être castés en types natifs.
      */
     protected $casts = [
-        'tags' => 'array',        // Cast automatique JSON ↔ Array
-        'images' => 'array',      // Cast automatique JSON ↔ Array  
-        'options' => 'array',     // Cast automatique JSON ↔ Array
+        'tags' => 'array',
+        'images' => 'array',  
+        'options' => 'array',
         'prix' => 'decimal:2',
         'visible' => 'boolean',
         'is_published' => 'boolean',
@@ -58,6 +58,13 @@ class Produit extends Model
             if (empty($produit->slug)) {
                 $produit->slug = Str::slug($produit->nom);
             }
+
+            if ($produit->is_published) {
+            if (!$produit->canBePublished()) {
+                throw new \Exception("Limite de produits publiés atteinte");
+            }
+        }
+        
         });
 
         static::updating(function ($produit) {
@@ -114,15 +121,12 @@ class Produit extends Model
     {
         if ($this->images && is_array($this->images) && count($this->images) > 0) {
             $firstImage = $this->images[0];
-            // Si c'est une URL complète, la retourner telle quelle
             if (filter_var($firstImage, FILTER_VALIDATE_URL)) {
                 return $firstImage;
             }
-            // Sinon, construire l'URL avec le storage
             return asset('storage/' . $firstImage);
         }
         
-        // Image par défaut si aucune image
         return asset('images/product-placeholder.png');
     }
 
@@ -157,5 +161,41 @@ class Produit extends Model
     public function setStockAttribute($value)
     {
         $this->attributes['stock'] = max(0, (int) $value);
+    }
+    
+    /**
+     * Vérifie si le produit peut être publié selon l'abonnement
+     */
+    public function canBePublished()
+    {
+        $boutique = $this->boutique;
+        
+        if (!$boutique) {
+            return false;
+        }
+        
+        $abonnement = $boutique->abonnementActif();
+        
+        // Gestion sécurisée de l'abonnement
+        if (!$abonnement || !isset($abonnement->plan)) {
+            // Si pas d'abonnement ou plan non défini, utiliser limite par défaut
+            $produitsPublies = $boutique->produits()->published()->count();
+            return $produitsPublies < 3; // Limite par défaut
+        }
+        
+        // Si c'est un abonnement gratuit avec limite
+        if (isset($abonnement->plan->is_free) && $abonnement->plan->is_free) {
+            $produitsPublies = $boutique->produits()->published()->count();
+            return $produitsPublies < ($abonnement->plan->limite_produits ?? 3);
+        }
+        
+        // Pour les abonnements payants (limite null = illimité)
+        if ($abonnement->plan->limite_produits === null) {
+            return true;
+        }
+        
+        // Vérifier la limite spécifique
+        $produitsPublies = $boutique->produits()->published()->count();
+        return $produitsPublies < $abonnement->plan->limite_produits;
     }
 }

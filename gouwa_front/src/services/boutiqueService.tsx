@@ -9,25 +9,74 @@ class BoutiqueService {
 
   async createBoutique(boutiqueData) {
     try {
+      const token = this.apiService.getToken();
+      
+      if (!token) {
+        throw new Error('Token d\'authentification manquant');
+      }
+
+      console.log('Token utilisé:', token);
+      console.log('URL de la requête:', `${API_BASE_URL}/api/boutiques`);
+
       const response = await fetch(`${API_BASE_URL}/api/boutiques`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${this.apiService.getToken()}`,
+          'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
+          // Ne pas définir Content-Type pour FormData - le navigateur le fait automatiquement
         },
         body: boutiqueData,
       });
 
-      const data = await response.json();
+      console.log('Statut de la réponse:', response.status);
+      console.log('Headers de la réponse:', Object.fromEntries(response.headers.entries()));
+
+      // Toujours essayer de parser le JSON
+      let data;
+      const responseText = await response.text();
+      console.log('Réponse brute du serveur:', responseText);
+
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Erreur de parsing JSON:', parseError);
+        console.error('Contenu de la réponse:', responseText);
+        throw {
+          response: {
+            status: response.status,
+            data: { message: `Erreur serveur ${response.status}: Réponse invalide - ${responseText}` }
+          }
+        };
+      }
 
       if (!response.ok) {
-        throw new Error(data.message || 'Erreur lors de la création de la boutique');
+        console.error('Erreur HTTP:', response.status, data);
+        // Créer un objet d'erreur avec la structure attendue
+        const error = new Error(data.message || `Erreur ${response.status}`);
+        error.response = {
+          status: response.status,
+          data: data
+        };
+        throw error;
       }
 
       return data;
     } catch (error) {
       console.error('Erreur lors de la création de la boutique:', error);
-      throw error;
+      
+      // Si l'erreur a déjà une structure response, la conserver
+      if (error.response) {
+        throw error;
+      }
+      
+      // Sinon, créer une structure d'erreur cohérente
+      throw {
+        response: {
+          status: 500,
+          data: { message: error.message || 'Erreur de connexion' }
+        },
+        message: error.message || 'Erreur de connexion'
+      };
     }
   }
 
@@ -113,18 +162,132 @@ class BoutiqueService {
     }
   }
 
+  // Nouvelles méthodes pour les abonnements
+  async getSubscriptionStatus(id) {
+    try {
+      return await this.apiService.request(`/boutiques/${id}/subscription-status`, {
+        method: 'GET',
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération du statut d\'abonnement:', error);
+      throw error;
+    }
+  }
+
+  async upgradeSubscription(id, subscriptionData) {
+    try {
+      return await this.apiService.request(`/boutiques/${id}/upgrade-subscription`, {
+        method: 'POST',
+        data: subscriptionData,
+      });
+    } catch (error) {
+      console.error('Erreur lors de la mise à niveau de l\'abonnement:', error);
+      throw error;
+    }
+  }
+
+  // Méthodes pour les statistiques (corrigées)
+  async getBoutiqueStats(boutiqueId, period = 'month') {
+    try {
+      return await this.apiService.request(`/boutiques/${boutiqueId}/stats`, {
+        method: 'GET',
+        params: { period }
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération des statistiques:', error);
+      throw error;
+    }
+  }
+
+  async getDashboardStats(boutiqueId, period = 'month') {
+    try {
+      return await this.apiService.request(`/boutiques/${boutiqueId}/dashboard-stats`, {
+        method: 'GET',
+        params: { period }
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération des statistiques du tableau de bord:', error);
+      throw error;
+    }
+  }
+
+  async getAllBoutiquesStats(period = 'month') {
+    try {
+      return await this.apiService.request('/boutiques/stats', {
+        method: 'GET',
+        params: { period }
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération des statistiques globales:', error);
+      throw error;
+    }
+  }
+
+  // Enregistrer une vue de boutique (appelé depuis la page publique de la boutique)
+  async recordView(boutiqueSlug) {
+    try {
+      return await this.apiService.request(`/public/boutiques/${boutiqueSlug}/view`, {
+        method: 'POST',
+        includeAuth: false // Cette route est publique
+      });
+    } catch (error) {
+      // Ne pas lever d'erreur pour ne pas casser l'affichage de la boutique
+      console.warn('Erreur lors de l\'enregistrement de la vue:', error);
+      return { success: false };
+    }
+  }
+
   createFormData(data) {
     const formData = new FormData();
     
-    if (data.nom) formData.append('nom', data.nom);
-    if (data.slogan) formData.append('slogan', data.slogan);
-    if (data.description) formData.append('description', data.description);
-    if (data.categorie) formData.append('categorie', data.categorie);
-    if (data.couleur_accent) formData.append('couleur_accent', data.couleur_accent);
-    if (data.mots_cles) formData.append('mots_cles', data.mots_cles);
+    // Debug: Log tous les champs avant de les ajouter
+    console.log('Création FormData avec:', data);
+    
+    // Ajouter tous les champs obligatoires
+    if (data.nom) {
+      formData.append('nom', data.nom);
+      console.log('Ajout nom:', data.nom);
+    }
+    
+    if (data.description) {
+      formData.append('description', data.description);
+      console.log('Ajout description:', data.description);
+    }
+    
+    if (data.categorie) {
+      formData.append('categorie', data.categorie);
+      console.log('Ajout categorie:', data.categorie);
+    }
+    
+    // Ajouter les champs optionnels seulement s'ils ont une valeur
+    if (data.slogan && data.slogan.trim()) {
+      formData.append('slogan', data.slogan);
+      console.log('Ajout slogan:', data.slogan);
+    }
+    
+    if (data.couleur_accent) {
+      formData.append('couleur_accent', data.couleur_accent);
+      console.log('Ajout couleur_accent:', data.couleur_accent);
+    }
+    
+    if (data.mots_cles && data.mots_cles.trim()) {
+      formData.append('mots_cles', data.mots_cles);
+      console.log('Ajout mots_cles:', data.mots_cles);
+    }
     
     if (data.logo && data.logo instanceof File) {
       formData.append('logo', data.logo);
+      console.log('Ajout logo:', data.logo.name, data.logo.size, data.logo.type);
+    }
+
+    // Debug: Vérifier le contenu final du FormData
+    console.log('FormData créé avec les entrées:');
+    for (let [key, value] of formData.entries()) {
+      if (value instanceof File) {
+        console.log(`${key}: [File] ${value.name} (${value.size} bytes, ${value.type})`);
+      } else {
+        console.log(`${key}: ${value}`);
+      }
     }
 
     return formData;
@@ -186,56 +349,8 @@ class BoutiqueService {
 
   getLogoUrl(logoPath) {
     if (!logoPath) return null;
-    
+    if (logoPath.startsWith('http')) return logoPath;
     return `${API_BASE_URL}/storage/${logoPath}`;
-  }
-
-   // Nouvelles méthodes pour les statistiques
-  async getBoutiqueStats(boutiqueId, period = 'month') {
-    try {
-      const response = await this.get(`/boutiques/${boutiqueId}/stats`, {
-        params: { period }
-      });
-      return this.handleResponse(response);
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
-
-  async getDashboardStats(boutiqueId, period = 'month') {
-    try {
-      const response = await this.get(`/boutiques/${boutiqueId}/dashboard-stats`, {
-        params: { period }
-      });
-      return this.handleResponse(response);
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
-
-  async getAllBoutiquesStats(period = 'month') {
-    try {
-      const response = await this.get('/boutiques/stats', {
-        params: { period }
-      });
-      return this.handleResponse(response);
-    } catch (error) {
-      throw this.handleError(error);
-    }
-  }
-
-  // Enregistrer une vue de boutique (appelé depuis la page publique de la boutique)
-  async recordView(boutiqueSlug) {
-    try {
-      const response = await this.post(`/public/boutiques/${boutiqueSlug}/view`, {}, {
-        skipAuth: true // Cette route est publique
-      });
-      return this.handleResponse(response);
-    } catch (error) {
-      // Ne pas lever d'erreur pour ne pas casser l'affichage de la boutique
-      console.warn('Erreur lors de l\'enregistrement de la vue:', error);
-      return { success: false };
-    }
   }
 
   // Méthodes utilitaires pour les statistiques
@@ -261,7 +376,59 @@ class BoutiqueService {
     return labels[period] || labels.month;
   }
 
-  // Générer un slug à partir du nom
+  // Méthodes utilitaires pour les abonnements
+  static formatSubscriptionData(subscription) {
+    return {
+      hasActive: subscription.has_active || false,
+      isExpired: subscription.is_expired || false,
+      daysRemaining: subscription.days_remaining || 0,
+      currentPlan: subscription.current_plan || null,
+      details: subscription.details || null
+    };
+  }
+
+  static isSubscriptionActive(boutique) {
+    return boutique.subscription && boutique.subscription.has_active && !boutique.subscription.is_expired;
+  }
+
+  static canCreateProducts(boutique) {
+    if (!this.isSubscriptionActive(boutique)) return false;
+    
+    const plan = boutique.subscription?.current_plan;
+    if (!plan) return false;
+    
+    // Si limite_produits est null ou -1, pas de limite
+    if (plan.limite_produits === null || plan.limite_produits === -1) return true;
+    
+    // Sinon vérifier la limite (vous devrez passer le nombre de produits actuels)
+    return true; // À implémenter selon votre logique
+  }
+
+  static getSubscriptionWarnings(boutique) {
+    const warnings = [];
+    const subscription = boutique.subscription;
+    
+    if (!subscription || !subscription.has_active) {
+      warnings.push({
+        type: 'error',
+        message: 'Aucun abonnement actif. Votre boutique n\'est pas accessible au public.'
+      });
+    } else if (subscription.is_expired) {
+      warnings.push({
+        type: 'error',
+        message: 'Votre abonnement a expiré. Renouvelez pour réactiver votre boutique.'
+      });
+    } else if (subscription.days_remaining <= 7) {
+      warnings.push({
+        type: 'warning',
+        message: `Votre abonnement expire dans ${subscription.days_remaining} jour(s). Pensez à le renouveler.`
+      });
+    }
+    
+    return warnings;
+  }
+
+  // Générer un slug à partir du nom (méthode statique)
   static generateSlug(name) {
     return name
       .toLowerCase()
@@ -271,15 +438,12 @@ class BoutiqueService {
       .replace(/^-|-$/g, '');
   }
 
-  // Obtenir l'URL du logo
+  // Obtenir l'URL du logo (méthode statique)
   static getLogoUrl(logoPath) {
     if (!logoPath) return null;
     if (logoPath.startsWith('http')) return logoPath;
-    return `${process.env.REACT_APP_API_URL || ''}/storage/${logoPath}`;
+    return `${process.env.REACT_APP_API_URL || API_BASE_URL}/storage/${logoPath}`;
   }
 }
-
-
-
 
 export default new BoutiqueService();

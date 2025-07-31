@@ -10,19 +10,12 @@ class ProduitService {
   async createProduit(boutiqueId, produitData) {
     try {
       const formData = this.createFormData(produitData);
-
-      // Debug: Afficher le contenu du FormData
-      console.log('FormData content:');
-      for (let [key, value] of formData.entries()) {
-        console.log(key, value);
-      }
-
+      
       const response = await fetch(`${API_BASE_URL}/api/boutiques/${boutiqueId}/produits`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiService.getToken()}`,
           'Accept': 'application/json',
-          // Ne PAS définir 'Content-Type' ici si on envoie du FormData
         },
         body: formData,
       });
@@ -30,20 +23,55 @@ class ProduitService {
       const data = await response.json();
 
       if (!response.ok) {
+        if (response.status === 403 && data.message.includes('limite de produits')) {
+          // Gérer spécifiquement l'erreur de limite d'abonnement
+          return {
+            success: false,
+            requiresUpgrade: true,
+            message: data.message,
+            limit: data.limit || 3 // Valeur par défaut
+          };
+        }
+        
         if (response.status === 422) {
           const message = data.message || 'Erreur de validation';
-          console.error('Erreurs de validation :', data.errors);
           throw new Error(message);
         }
         throw new Error(data.message || 'Erreur serveur');
       }
 
-      return data;
+      return {
+        success: true,
+        data,
+        message: 'Produit créé avec succès'
+      };
     } catch (error) {
       console.error('Erreur détaillée:', error);
-      throw new Error(`Erreur lors de la création du produit: ${error.message}`);
+      throw error;
     }
   }
+
+  async checkProductLimit(boutiqueId) {
+    try {
+      const response = await this.apiService.request(`/boutiques/${boutiqueId}/product-limits`, {
+        method: 'GET'
+      });
+      
+      return {
+        currentCount: response.current_count,
+        limit: response.limit,
+        canAddMore: response.can_add_more
+      };
+    } catch (error) {
+      console.error('Erreur lors de la vérification des limites:', error);
+      return {
+        currentCount: 0,
+        limit: 3, // Valeur par défaut pour le plan gratuit
+        canAddMore: true
+      };
+    }
+  }
+
 
   async getAllProduits(boutiqueId) {
     return this.apiService.request(`/boutiques/${boutiqueId}/produits`, {

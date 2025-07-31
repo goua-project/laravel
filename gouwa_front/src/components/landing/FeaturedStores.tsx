@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { Check, Star, Zap, Building2, ArrowRight, ExternalLink } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import BoutiqueService from '../../services/boutiqueService';
+import BoutiqueService from '../../services/BoutiqueService';
 import ProduitService from '../../services/produitService';
 import StatsService from '../../services/StatsService';
-
+  
 
 const Container = ({ children, className = "" }) => (
   <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ${className}`}>{children}</div>

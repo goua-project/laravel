@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../../contexts/StoreContext';
-import BoutiqueService from '../../services/boutiqueService';
+import BoutiqueService from '../../services/BoutiqueService';
 import ProduitService from '../../services/produitService';
 import Button from '../common/Button';
 import { 
@@ -14,7 +14,10 @@ import {
   ChevronRight,
   ExternalLink,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  Crown,
+  Calendar,
+  Clock
 } from 'lucide-react';
 
 const DashboardOverview = () => {
@@ -25,7 +28,46 @@ const DashboardOverview = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [recentProducts, setRecentProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [subscriptionInfo, setSubscriptionInfo] = useState(null);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
   
+  // Fonction pour récupérer les informations d'abonnement
+  const fetchSubscriptionInfo = async () => {
+    try {
+      setSubscriptionLoading(true);
+      // Appel à votre API pour récupérer les informations d'abonnement
+      const response = await fetch('/api/user/subscription', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data) {
+          setSubscriptionInfo(data.data);
+        }
+      }
+    } catch (error) {
+      console.error('Erreur lors de la récupération des informations d\'abonnement:', error);
+    } finally {
+      setSubscriptionLoading(false);
+    }
+  };
+
+  // Fonction pour calculer les jours restants
+  const calculateDaysRemaining = (endDate) => {
+    if (!endDate) return null;
+    
+    const end = new Date(endDate);
+    const now = new Date();
+    const diffTime = end - now;
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    return diffDays > 0 ? diffDays : 0;
+  };
+
   // Fonction pour récupérer les boutiques de l'utilisateur
   const fetchUserBoutiques = async (showLoader = true) => {
     try {
@@ -70,6 +112,9 @@ const DashboardOverview = () => {
         
         // Charger les produits récents après avoir défini la boutique
         await fetchRecentProducts(transformedBoutique.id);
+        
+        // Charger les informations d'abonnement
+        await fetchSubscriptionInfo();
         
       } else if (response.success && response.data.length === 0) {
         // Utilisateur n'a pas de boutique
@@ -232,6 +277,58 @@ const DashboardOverview = () => {
     return ProduitService.getImageUrl(firstImage);
   };
 
+  // Composant pour afficher les informations d'abonnement
+  const SubscriptionBadge = () => {
+    if (subscriptionLoading) {
+      return (
+        <div className="flex items-center text-sm text-gray-500">
+          <Loader2 size={16} className="animate-spin mr-2" />
+          Chargement...
+        </div>
+      );
+    }
+
+    if (!subscriptionInfo) {
+      return (
+        <div className="flex items-center bg-gray-100 px-3 py-1 rounded-full">
+          <Package size={16} className="text-gray-500 mr-2" />
+          <span className="text-sm font-medium text-gray-700">Plan Gratuit</span>
+        </div>
+      );
+    }
+
+    const daysRemaining = calculateDaysRemaining(subscriptionInfo.date_fin);
+    const isPremium = !subscriptionInfo.plan?.is_free;
+    const isExpiringSoon = daysRemaining !== null && daysRemaining <= 7;
+
+    return (
+      <div className={`flex items-center px-3 py-1 rounded-full ${
+        isPremium 
+          ? isExpiringSoon 
+            ? 'bg-red-100 text-red-700' 
+            : 'bg-gradient-to-r from-orange-100 to-yellow-100 text-orange-700'
+          : 'bg-gray-100 text-gray-700'
+      }`}>
+        {isPremium ? (
+          <Crown size={16} className="mr-2" />
+        ) : (
+          <Package size={16} className="mr-2" />
+        )}
+        <span className="text-sm font-medium">
+          {subscriptionInfo.plan?.nom || 'Plan Gratuit'}
+        </span>
+        {isPremium && daysRemaining !== null && (
+          <div className="flex items-center ml-2 pl-2 border-l border-current border-opacity-30">
+            <Clock size={14} className="mr-1" />
+            <span className="text-xs">
+              {daysRemaining > 0 ? `${daysRemaining}j restants` : 'Expiré'}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   // Affichage pendant le chargement initial
   if (loading) {
     return (
@@ -284,6 +381,9 @@ const DashboardOverview = () => {
   }
   
   const stats = calculateStats();
+  const daysRemaining = subscriptionInfo ? calculateDaysRemaining(subscriptionInfo.date_fin) : null;
+  const isPremium = subscriptionInfo && !subscriptionInfo.plan?.is_free;
+  const isExpiringSoon = daysRemaining !== null && daysRemaining <= 7;
   
   return (
     <div className="space-y-6">
@@ -291,7 +391,10 @@ const DashboardOverview = () => {
         <div className="bg-black text-white p-6">
           <div className="flex justify-between items-start">
             <div>
-              <h2 className="text-xl font-semibold">Bienvenue dans votre boutique</h2>
+              <div className="flex items-center gap-3 mb-2">
+                <h2 className="text-xl font-semibold">Bienvenue dans votre boutique</h2>
+                <SubscriptionBadge />
+              </div>
               <p className="mt-1 text-gray-300">Suivez les performances de {currentStore.name}</p>
               {currentStore.slogan && (
                 <p className="mt-1 text-sm text-gray-400 italic">"{currentStore.slogan}"</p>
@@ -314,6 +417,29 @@ const DashboardOverview = () => {
             </div>
           </div>
         </div>
+
+        {/* Alerte d'expiration d'abonnement */}
+        {isPremium && isExpiringSoon && (
+          <div className="bg-red-50 border-l-4 border-red-400 p-4">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <AlertCircle className="h-5 w-5 text-red-400" />
+              </div>
+              <div className="ml-3 flex-1">
+                <p className="text-sm text-red-700">
+                  <span className="font-medium">Attention !</span> Votre abonnement {subscriptionInfo.plan?.nom} expire dans {daysRemaining} jour{daysRemaining > 1 ? 's' : ''}.
+                </p>
+              </div>
+              <div className="ml-4 flex-shrink-0">
+                <Link to="/dashboard/subscriptions">
+                  <Button size="sm" variant="primary">
+                    Renouveler
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Filters */}
         <div className="border-b border-gray-200 px-6 py-2 bg-gray-50 flex justify-between items-center">
@@ -455,19 +581,19 @@ const DashboardOverview = () => {
             </div>
           </Link>
           
-          <Link to="/dashboard/payments" className="group">
+          <Link to="/dashboard/subscriptions" className="group">
             <div className="border border-gray-200 rounded-lg p-6 hover:border-orange-500 hover:shadow-md transition-all duration-200 flex flex-col items-center text-center">
               <div className="bg-green-100 rounded-full p-3 mb-3 group-hover:bg-green-200 transition-colors">
-                <DollarSign size={24} className="text-green-600" />
+                <Crown size={24} className="text-green-600" />
               </div>
-              <h4 className="font-medium text-gray-900 mb-2">Configurer paiements</h4>
-              <p className="text-sm text-gray-500">Accepter des paiements en ligne</p>
+              <h4 className="font-medium text-gray-900 mb-2">Mon abonnement</h4>
+              <p className="text-sm text-gray-500">Gérer votre plan d'abonnement</p>
             </div>
           </Link>
         </div>
       </div>
 
-      {/* Store Information Card */}
+      {/* Store Information Card with Subscription Details */}
       <div className="bg-gradient-to-br from-orange-50 to-orange-100 rounded-lg p-6 border border-orange-200">
         <div className="flex items-start justify-between">
           <div className="flex items-center">
@@ -481,7 +607,15 @@ const DashboardOverview = () => {
               )}
             </div>
             <div className="ml-4">
-              <h3 className="text-lg font-semibold text-gray-900">{currentStore.name}</h3>
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className="text-lg font-semibold text-gray-900">{currentStore.name}</h3>
+                {isPremium && (
+                  <div className="flex items-center bg-gradient-to-r from-orange-400 to-yellow-400 text-white px-2 py-1 rounded-full text-xs">
+                    <Crown size={12} className="mr-1" />
+                    Premium
+                  </div>
+                )}
+              </div>
               <p className="text-sm text-orange-700 mb-1">
                 Catégorie: {currentStore.category === 'physical' ? 'Produits physiques' : 
                            currentStore.category === 'digital' ? 'Produits digitaux' : 
@@ -490,6 +624,20 @@ const DashboardOverview = () => {
               <p className="text-xs text-gray-600 max-w-md line-clamp-2">
                 {currentStore.description}
               </p>
+              {/* Informations d'abonnement */}
+              {subscriptionInfo && (
+                <div className="mt-2 text-xs text-gray-600">
+                  <div className="flex items-center gap-4">
+                    <span>Plan: {subscriptionInfo.plan?.nom || 'Gratuit'}</span>
+                    {isPremium && daysRemaining !== null && (
+                      <span className={`flex items-center ${isExpiringSoon ? 'text-red-600' : 'text-green-600'}`}>
+                        <Calendar size={12} className="mr-1" />
+                        {daysRemaining > 0 ? `${daysRemaining} jours restants` : 'Expiré'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <Link to="/dashboard/settings" className="text-orange-600 hover:text-orange-700">
@@ -521,6 +669,120 @@ const DashboardOverview = () => {
             </div>
           </div>
         </div>
+
+        {/* Section abonnement étendue pour les plans premium */}
+        {isPremium && subscriptionInfo && (
+          <div className="mt-4 pt-4 border-t border-orange-200">
+            <div className="bg-white bg-opacity-50 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-medium text-gray-900 flex items-center">
+                  <Crown size={16} className="text-orange-500 mr-2" />
+                  Mon abonnement {subscriptionInfo.plan?.nom}
+                </h4>
+                <Link to="/dashboard/subscriptions">
+                  <Button variant="outline" size="sm">
+                    Gérer
+                  </Button>
+                </Link>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-gray-600">Statut:</span>
+                  <span className={`font-medium px-2 py-1 rounded-full text-xs ${
+                    subscriptionInfo.statut === 'actif' 
+                      ? 'bg-green-100 text-green-800' 
+                      : 'bg-red-100 text-red-800'
+                  }`}>
+                    {subscriptionInfo.statut === 'actif' ? 'Actif' : 'Inactif'}
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-gray-600">Expire le:</span>
+                  <span className="font-medium">
+                    {new Date(subscriptionInfo.date_fin).toLocaleDateString('fr-FR')}
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between py-2">
+                  <span className="text-gray-600">Jours restants:</span>
+                  <span className={`font-medium ${isExpiringSoon ? 'text-red-600' : 'text-green-600'}`}>
+                    {daysRemaining > 0 ? daysRemaining : 0}
+                  </span>
+                </div>
+              </div>
+
+              {/* Barre de progression pour les jours restants */}
+              {daysRemaining !== null && (
+                <div className="mt-3">
+                  <div className="flex justify-between text-xs text-gray-600 mb-1">
+                    <span>Période d'abonnement</span>
+                    <span>
+                      {Math.max(0, Math.round((daysRemaining / 30) * 100))}% restant
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div 
+                      className={`h-2 rounded-full transition-all duration-300 ${
+                        isExpiringSoon ? 'bg-red-400' : 'bg-gradient-to-r from-orange-400 to-yellow-400'
+                      }`}
+                      style={{
+                        width: `${Math.max(5, Math.min(100, (daysRemaining / 30) * 100))}%`
+                      }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Actions selon l'état de l'abonnement */}
+              {isExpiringSoon && (
+                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-center">
+                    <AlertCircle size={16} className="text-red-500 mr-2" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-800">
+                        Abonnement bientôt expiré
+                      </p>
+                      <p className="text-xs text-red-600 mt-1">
+                        Renouvelez maintenant pour éviter l'interruption de service
+                      </p>
+                    </div>
+                    <Link to="/dashboard/subscriptions">
+                      <Button size="sm" variant="primary">
+                        Renouveler
+                      </Button>
+                    </Link>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Incitation à l'upgrade pour les utilisateurs gratuits */}
+        {!isPremium && (
+          <div className="mt-4 pt-4 border-t border-orange-200">
+            <div className="bg-gradient-to-r from-orange-400 to-yellow-400 text-white rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-medium flex items-center">
+                    <Crown size={16} className="mr-2" />
+                    Passez au premium
+                  </h4>
+                  <p className="text-sm opacity-90 mt-1">
+                    Débloquez toutes les fonctionnalités avancées
+                  </p>
+                </div>
+                <Link to="/dashboard/subscriptions">
+                  <Button variant="outline" size="sm" className="text-white border-white hover:bg-white hover:text-orange-600">
+                    Voir les plans
+                  </Button>
+                </Link>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

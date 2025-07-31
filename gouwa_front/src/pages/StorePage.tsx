@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import BoutiqueService from '../services/boutiqueService';
 import ProduitService from '../services/produitService';
+
 import Button from '../components/common/Button';
 import { 
   ShoppingBag, 
@@ -21,6 +21,8 @@ import { useAuth } from '../contexts/AuthContext';
 import CartIcon from '../components/cart/CartIcon';
 import CartDrawer from '../components/cart/CartDrawer';
 import AddToCartButton from '../components/cart/AddToCartButton';
+import StatsService from '../services/StatsService';
+import BoutiqueService from '../services/BoutiqueService';
 
 const StorePage = () => {
   const { storeId } = useParams();
@@ -76,95 +78,149 @@ const StorePage = () => {
     }
   };
   
-  // Fonction pour enregistrer une visite
+  // ✅ Fonction améliorée pour enregistrer une visite
   const recordStoreView = async (boutique) => {
     try {
-      const response = await fetch(`/api/boutiques/${boutique.slug}/record-view`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        credentials: 'same-origin'
-      });
+      // Utiliser le service StatsService au lieu de fetch direct
+      const response = await StatsService.recordView(boutique.slug);
       
-      const result = await response.json();
-      
-      if (result.success && result.view_recorded) {
+      if (response && response.success) {
         console.log('Vue enregistrée avec succès');
         setStore(prev => prev ? {
           ...prev,
           visitCount: prev.visitCount + 1
         } : prev);
+      } else {
+        console.warn('Échec de l\'enregistrement de la vue:', response?.message || 'Erreur inconnue');
       }
     } catch (error) {
       console.error('Erreur lors de l\'enregistrement de la vue:', error);
+      // ✅ Ne pas faire échouer l'application si l'enregistrement échoue
     }
   };
   
-  useEffect(() => {
-    const fetchStore = async () => {
-      if (!storeId) return;
+  // Version corrigée de la méthode fetchStore
+useEffect(() => {
+  const fetchStore = async () => {
+    if (!storeId) {
+      setError("Identifiant de boutique manquant");
+      setLoading(false);
+      return;
+    }
+    
+    setLoading(true);
+    setError(null);
+    
+    try {
+      let storeData = null;
+      let lastError = null;
       
-      setLoading(true);
-      setError(null);
-      
+      // Essayer d'abord par slug
       try {
-        let storeData;
+        console.log('Tentative de récupération par slug:', storeId);
+        const response = await BoutiqueService.getBoutiqueBySlug(storeId);
         
-        try {
-          const response = await BoutiqueService.getBoutiqueBySlug(storeId);
+        // Vérifier la structure de la réponse
+        if (response && response.data) {
           storeData = response.data;
-        } catch (slugError) {
-          const response = await BoutiqueService.getBoutiqueById(storeId);
-          storeData = response.data;
+          console.log('Boutique trouvée par slug:', storeData);
+        } else if (response && !response.data && response.id) {
+          // Cas où la réponse contient directement les données
+          storeData = response;
+          console.log('Boutique trouvée par slug (format direct):', storeData);
         }
+      } catch (slugError) {
+        console.log('Échec récupération par slug:', slugError);
+        lastError = slugError;
         
-        if (storeData) {
-          const adaptedStore = {
-            id: storeData.id,
-            name: storeData.nom,
-            slug: storeData.slug,
-            slogan: storeData.slogan || "Bienvenue dans notre boutique",
-            description: storeData.description,
-            type: storeData.categorie,
-            accentColor: storeData.couleur_accent || '#F25539',
-            logo: storeData.logo ? BoutiqueService.getLogoUrl(storeData.logo) : null,
-            visitCount: Math.floor(Math.random() * 1000) + 100,
-            owner: storeData.user ? {
-              name: storeData.user.name,
-              email: storeData.user.email
-            } : null,
-            keywords: storeData.mots_cles,
-            createdAt: storeData.created_at,
-            updatedAt: storeData.updated_at
-          };
-          
-          setStore(adaptedStore);
-          await recordStoreView(adaptedStore);
-          await fetchProducts(adaptedStore.id);
-          
-          const urlParams = new URLSearchParams(window.location.search);
-          const productId = urlParams.get('product');
-          
-          if (productId && products.length > 0) {
-            const product = products.find(p => p.id === productId);
-            if (product) {
-              setSelectedProduct(product);
-              setIsProductDetailOpen(true);
+        // Essayer par ID seulement si le storeId ressemble à un ID numérique
+        if (/^\d+$/.test(storeId)) {
+          try {
+            console.log('Tentative de récupération par ID:', storeId);
+            const response = await BoutiqueService.getBoutiqueById(storeId);
+            
+            if (response && response.data) {
+              storeData = response.data;
+              console.log('Boutique trouvée par ID:', storeData);
+            } else if (response && !response.data && response.id) {
+              storeData = response;
+              console.log('Boutique trouvée par ID (format direct):', storeData);
             }
+          } catch (idError) {
+            console.log('Échec récupération par ID:', idError);
+            lastError = idError;
           }
         }
-      } catch (err) {
-        console.error('Erreur lors de la récupération de la boutique:', err);
-        setError('Boutique non trouvée ou erreur de chargement');
-      } finally {
-        setLoading(false);
       }
-    };
-    
-    fetchStore();
-  }, [storeId]);
+      
+      // Vérifier si on a trouvé des données valides
+      if (!storeData || !storeData.id || !storeData.nom) {
+        console.error('Données de boutique invalides:', storeData);
+        throw new Error('Boutique introuvable ou données invalides');
+      }
+      
+      // Vérifier si la boutique est active/publique
+      if (storeData.status && storeData.status !== 'active') {
+        throw new Error('Cette boutique n\'est pas disponible actuellement');
+      }
+      
+      // Adapter les données pour le format React
+      const adaptedStore = {
+        id: storeData.id,
+        name: storeData.nom || 'Boutique sans nom',
+        slug: storeData.slug || storeId,
+        slogan: storeData.slogan || "Bienvenue dans notre boutique",
+        description: storeData.description || "Description non disponible",
+        type: storeData.categorie || 'physical',
+        accentColor: storeData.couleur_accent || '#F25539',
+        logo: storeData.logo ? BoutiqueService.getLogoUrl(storeData.logo) : null,
+        visitCount: storeData.visit_count || Math.floor(Math.random() * 1000) + 100,
+        owner: storeData.user ? {
+          name: storeData.user.name,
+          email: storeData.user.email
+        } : null,
+        keywords: storeData.mots_cles || '',
+        createdAt: storeData.created_at,
+        updatedAt: storeData.updated_at
+      };
+      
+      console.log('Boutique adaptée:', adaptedStore);
+      setStore(adaptedStore);
+      
+      // Enregistrer la visite après avoir défini la boutique
+      await recordStoreView(adaptedStore);
+      
+      // Charger les produits
+      await fetchProducts(adaptedStore.id);
+      
+    } catch (err) {
+      console.error('Erreur lors de la récupération de la boutique:', err);
+      
+      // Messages d'erreur plus spécifiques
+      let errorMessage = 'Boutique non trouvée ou erreur de chargement';
+      
+      if (err.message) {
+        errorMessage = err.message;
+      } else if (err.response) {
+        if (err.response.status === 404) {
+          errorMessage = 'Boutique introuvable';
+        } else if (err.response.status === 403) {
+          errorMessage = 'Accès à cette boutique non autorisé';
+        } else if (err.response.status >= 500) {
+          errorMessage = 'Erreur serveur, veuillez réessayer plus tard';
+        } else {
+          errorMessage = `Erreur ${err.response.status}: ${err.response.data?.message || 'Erreur inconnue'}`;
+        }
+      }
+      
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  fetchStore();
+}, [storeId]);
 
   const fetchProducts = async (boutiqueId) => {
     try {
@@ -731,4 +787,4 @@ const StorePage = () => {
   );
 };
 
-export default StorePage;
+export default StorePage; 

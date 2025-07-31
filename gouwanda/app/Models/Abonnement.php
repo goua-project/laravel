@@ -15,6 +15,7 @@ class Abonnement extends Model
         'user_id',
         'plan_id',
         'date_debut',
+        'boutique_id',
         'date_fin',
         'statut',
         'reference_paiement'
@@ -38,9 +39,20 @@ class Abonnement extends Model
     }
 
     public function isActive()
-    {
-        return $this->statut === 'actif' && $this->date_fin > now();
+{
+    if ($this->statut !== 'actif') {
+        return false;
     }
+    
+    // Si date_fin est null => abonnement illimité => actif
+    if (is_null($this->date_fin)) {
+        return true;
+    }
+
+    // Sinon vérifier que la date de fin est dans le futur
+    return $this->date_fin->isFuture();
+}
+
 
     public function prolonger($dureeJours)
     {

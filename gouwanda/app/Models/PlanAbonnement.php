@@ -50,54 +50,61 @@ class PlanAbonnement extends Model
     }
 
     public static function getDefaultPlans()
-    {
-        return [
-            [
-                'nom' => 'Gratuit',
-                'slug' => 'gratuit',
-                'description' => 'Plan de base pour commencer',
-                'prix' => 0,
-                'commission' => 3,
-                'limite_produits' => 3,
-                'mobile_money' => true,
-                'dashboard_boutique' => true,
-                'is_free' => true,
-                'is_active' => true
-            ],
-            [
-                'nom' => 'Pro',
-                'slug' => 'pro',
-                'description' => 'Pour les vendeurs sérieux',
-                'prix' => 10000,
-                'limite_produits' => null, // Illimité
-                'mobile_money' => true,
-                'dashboard_boutique' => true,
-                'personnalisation_avancee' => true,
-                'statistiques_seo' => true,
-                'support_prioritaire' => true,
-                'zero_commission' => true,
-                'is_active' => true
-            ],
-            [
-                'nom' => 'Business',
-                'slug' => 'business',
-                'description' => 'Solution complète pour professionnels',
-                'prix' => 25000,
-                'limite_produits' => null, // Illimité
-                'mobile_money' => true,
-                'dashboard_boutique' => true,
-                'personnalisation_avancee' => true,
-                'statistiques_seo' => true,
-                'support_prioritaire' => true,
-                'certificat_avance' => true,
-                'multi_utilisateurs' => true,
-                'rapports_exportables' => true,
-                'support_dedie' => true,
-                'zero_commission' => true,
-                'is_active' => true
-            ]
-        ];
-    }
+{
+    return [
+        [
+            'nom' => 'Gratuit',
+            'slug' => 'gratuit',
+            'description' => 'Plan de base pour commencer',
+            'prix' => 0,
+            'commission' => 3,
+            'limite_produits' => 3,
+            'mobile_money' => true,
+            'dashboard_boutique' => true,
+            'is_free' => true,
+            'is_active' => true,
+            'duree_mois' => null
+        ],
+        [
+            'nom' => 'Pro',
+            'slug' => 'pro',
+            'description' => 'Pour les vendeurs sérieux',
+            'prix' => 10000,
+            'commission' => 0, // ← CORRECTION ici
+            'limite_produits' => null, // Illimité
+            'mobile_money' => true,
+            'dashboard_boutique' => true,
+            'personnalisation_avancee' => true,
+            'statistiques_seo' => true,
+            'support_prioritaire' => true,
+            'is_free' => false,
+            'is_active' => true,
+            'duree_mois' => 1,
+        ],
+        [
+            'nom' => 'Business',
+            'slug' => 'business',
+            'description' => 'Solution complète pour professionnels',
+            'prix' => 25000,
+            'commission' => 0, // ← CORRECTION ici
+            'limite_produits' => null, // Illimité
+            'mobile_money' => true,
+            'dashboard_boutique' => true,
+            'personnalisation_avancee' => true,
+            'statistiques_seo' => true,
+            'support_prioritaire' => true,
+            'certificat_avance' => true,
+            'multi_utilisateurs' => true,
+            'rapports_exportables' => true,
+            'support_dedie' => true,
+            'is_free' => false,
+            'is_active' => true,
+            'duree_mois' => 1
+
+        ]
+    ];
+}
+
 
     public function getFeaturesAttribute()
     {

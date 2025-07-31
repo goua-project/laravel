@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\BoutiqueController;
 use App\Http\Controllers\Api\ProduitController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BoutiqueStatsController;
+use App\Http\Controllers\Api\PlanAbonnementController;
 
 /*
 |--------------------------------------------------------------------------
@@ -56,15 +57,41 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
         return $request->user();
     });
+
+Route::get('/boutiques/{boutiqueId}/product-limits', [ProduitController::class, 'checkLimits'])
+    ->middleware('auth:sanctum');
+
+    // Route pour vérifier les limites de produits
+Route::get('boutiques/{boutique}/product-limits', [ProduitController::class, 'checkLimits'])->name('boutiques.product-limits');
+    // Nouvelles routes pour les abonnements
+    Route::get('boutiques/{id}/subscription-status', [BoutiqueController::class, 'getSubscriptionStatus']);
+    Route::post('boutiques/{id}/upgrade-subscription', [BoutiqueController::class, 'upgradeSubscription']);
+    
+    // Routes Plans d'abonnement
+    Route::get('plans', [PlanAbonnementController::class, 'index']);
+    Route::get('plans/{id}', [PlanAbonnementController::class, 'show']);
+    Route::get('plans/slug/{slug}', [PlanAbonnementController::class, 'showBySlug']);
+    Route::post('plans/compare', [PlanAbonnementController::class, 'compare']);
+    Route::get('plans/{id}/calculate-price', [PlanAbonnementController::class, 'calculatePrice']);
+    
+    // Routes pour l'historique et recommandations
+    Route::get('my-subscription-history', [PlanAbonnementController::class, 'getUserSubscriptionHistory']);
+    Route::get('plan-recommendations', [PlanAbonnementController::class, 'getRecommendations']);
 });
 
-
+// Routes publiques (sans authentification)
+Route::get('public/plans', [PlanAbonnementController::class, 'index']);
+Route::get('public/plans/{id}', [PlanAbonnementController::class, 'show']);
+Route::get('public/plans/slug/{slug}', [PlanAbonnementController::class, 'showBySlug']);
+Route::post('public/plans/compare', [PlanAbonnementController::class, 'compare']);
+Route::get('public/plans/{id}/calculate-price', [PlanAbonnementController::class, 'calculatePrice']);
 
 // Routes pour les produits (dans le contexte d'une boutique)
 Route::prefix('boutiques/{boutique}')->group(function () {
     // Routes publiques (sans authentification)
     Route::get('produits', [ProduitController::class, 'index']);
     Route::get('produits/{produit}', [ProduitController::class, 'show']);
+    
     
     // Routes protégées (avec authentification)
     Route::middleware('auth:sanctum')->group(function () {

@@ -4,6 +4,7 @@ import Button from '../common/Button';
 import { ImagePlus, Trash2, Save, ArrowLeft, FileText, Video, Music, Book, Archive } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ProduitService from '../../services/produitService';
+import UpgradePlanModal from  '../../modals/UpgradePlanModal';
 
 interface ProductFormProps {
   productId?: string;
@@ -15,6 +16,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
   const { currentStore } = useStore();
   const navigate = useNavigate();
   
+  // Form states
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [description, setDescription] = useState('');
@@ -24,27 +26,61 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
   const [inStock, setInStock] = useState('0');
   const [isVisible, setIsVisible] = useState(true);
   const [images, setImages] = useState<(string | File)[]>(['']);
-  const [imageFiles, setImageFiles] = useState<File[]>([]);
   const [shippingFrom, setShippingFrom] = useState('');
   const [deliveryTime, setDeliveryTime] = useState('');
   const [downloadLink, setDownloadLink] = useState('');
-  const [serviceType, setServiceType] = useState('');
   const [digitalProductType, setDigitalProductType] = useState<DigitalProductType>('pdf');
   const [fileSize, setFileSize] = useState('');
   const [duration, setDuration] = useState('');
   const [format, setFormat] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
-  
+
+  // Subscription plan states
+  const [productLimits, setProductLimits] = useState({
+    currentCount: 0,
+    limit: 3,
+    canAddMore: true,
+    planName: 'Gratuit'
+  });
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [upgradeMessage, setUpgradeMessage] = useState('');
+
   useEffect(() => {
-    if (currentStore?.type === 'digital') {
-      setIsDigital(true);
+    if (currentStore) {
+      checkProductLimits();
+      
+      if (currentStore.type === 'digital') {
+        setIsDigital(true);
+      }
+      
+      if (productId) {
+        loadProduct();
+      }
     }
-    
-    if (productId && currentStore) {
-      loadProduct();
+  }, [currentStore, productId]);
+
+  const checkProductLimits = async () => {
+    try {
+      const limits = await ProduitService.checkProductLimit(currentStore.id);
+      setProductLimits({
+        currentCount: limits.currentCount,
+        limit: limits.limit || 3,
+        canAddMore: limits.canAddMore,
+        planName: limits.planName || 'Gratuit'
+      });
+
+      if (!limits.canAddMore && !productId) {
+        setUpgradeMessage(
+          `Vous avez atteint la limite de ${limits.limit} produits autorisés par votre abonnement ${limits.planName}. 
+          Veuillez mettre à niveau votre plan pour ajouter plus de produits.`
+        );
+        setShowUpgradeModal(true);
+      }
+    } catch (error) {
+      console.error("Failed to check product limits:", error);
     }
-  }, [productId, currentStore]);
+  };
 
   const loadProduct = async () => {
     if (!currentStore || !productId) return;
@@ -66,17 +102,47 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
       setShippingFrom(product.shippingFrom || '');
       setDeliveryTime(product.deliveryTime || '');
       setDownloadLink(product.downloadLink || '');
-      setServiceType(product.serviceType || '');
       setDigitalProductType(product.digitalProductType || 'pdf');
       setFileSize(product.fileSize || '');
       setDuration(product.duration || '');
       setFormat(product.format || '');
     } catch (error) {
-      console.error('Erreur lors du chargement du produit:', error);
+      console.error('Failed to load product:', error);
       setErrors(['Erreur lors du chargement du produit']);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Helper function to check if error is related to product limit
+  const isProductLimitError = (error: any): boolean => {
+    const errorMessage = error?.message || '';
+    const errorString = String(error);
+    
+    return (
+      errorMessage.includes('Limite de produits') ||
+      errorMessage.includes('product limit') ||
+      errorMessage.includes('SQLSTATE[45000]') ||
+      errorMessage.includes('1644') ||
+      errorString.includes('Limite de produits publiés atteinte') ||
+      errorString.includes('product limit reached')
+    );
+  };
+
+  // Helper function to handle upgrade modal display
+  const handleProductLimitReached = () => {
+    setUpgradeMessage(
+      `Vous avez atteint la limite de ${productLimits.limit} produits autorisés par votre abonnement ${productLimits.planName}.
+
+Pour continuer à ajouter des produits, vous devez mettre à niveau votre abonnement vers un plan supérieur.
+
+Les plans premium offrent :
+• Plus de produits autorisés
+• Fonctionnalités avancées
+• Support prioritaire
+• Outils de marketing intégrés`
+    );
+    setShowUpgradeModal(true);
   };
   
   const handleSubmit = async (e: React.FormEvent) => {
@@ -84,11 +150,16 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
     
     if (!currentStore) return;
     
+    // Check product limits before submitting for new products
+    if (!productId && !productLimits.canAddMore) {
+      handleProductLimitReached();
+      return;
+    }
+
     setIsLoading(true);
     setErrors([]);
     
     try {
-      // Créer l'objet productData avec toutes les données du formulaire
       const productData = {
         name: name.trim(),
         price: price,
@@ -102,21 +173,14 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
         shippingFrom: !isDigital ? shippingFrom.trim() : '',
         deliveryTime: !isDigital ? deliveryTime.trim() : '',
         downloadLink: isDigital ? downloadLink.trim() : '',
-        serviceType: serviceType.trim(),
         digitalProductType,
         fileSize: fileSize.trim(),
         duration: duration.trim(),
         format: format.trim(),
       };
       
-      console.log('Product data before conversion:', productData);
-      
-      // Convertir les données au format Laravel
       const laravelData = ProduitService.convertToLaravelFormat(productData);
       
-      console.log('Laravel data after conversion:', laravelData);
-      
-      // Validation côté client
       const validationErrors = ProduitService.validateProduitData(laravelData);
       if (validationErrors.length > 0) {
         setErrors(validationErrors);
@@ -129,9 +193,15 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
         response = await ProduitService.updateProduit(currentStore.id, productId, laravelData);
       } else {
         response = await ProduitService.createProduit(currentStore.id, laravelData);
+        
+        // Check if response indicates upgrade is required
+        if (response.requiresUpgrade) {
+          setUpgradeMessage(response.message);
+          setShowUpgradeModal(true);
+          setIsLoading(false);
+          return;
+        }
       }
-      
-      console.log('API Response:', response);
       
       if (response.success || response.data) {
         navigate('/dashboard/products');
@@ -139,16 +209,30 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
         setErrors([response.message || 'Une erreur est survenue']);
       }
     } catch (error: any) {
-      console.error('Error saving product:', error);
-      if (error.message) {
-        setErrors([error.message]);
+      console.error('Failed to save product:', error);
+      
+      // Check if this is a product limit error
+      if (isProductLimitError(error)) {
+        console.log('Product limit error detected, showing upgrade modal');
+        // Refresh product limits to get current state
+        await checkProductLimits();
+        handleProductLimitReached();
       } else {
-        setErrors(['Une erreur est survenue lors de la sauvegarde']);
+        // For other errors, show the error message but filter out technical details
+        let errorMessage = error.message || 'Une erreur est survenue lors de la sauvegarde';
+        
+        // Clean up technical SQL error messages
+        if (errorMessage.includes('SQLSTATE') || errorMessage.includes('SQL:')) {
+          errorMessage = 'Une erreur technique est survenue. Veuillez réessayer.';
+        }
+        
+        setErrors([errorMessage]);
       }
     } finally {
       setIsLoading(false);
     }
   };
+  
   
   const handleAddImage = () => {
     setImages([...images, '']);
@@ -203,7 +287,7 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
       </div>
     );
   }
-  
+
   return (
     <div className="bg-white rounded-lg shadow-md overflow-hidden">
       <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 flex items-center">
@@ -218,6 +302,34 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
           {productId ? 'Modifier le produit' : 'Ajouter un nouveau produit'}
         </h2>
       </div>
+
+      {/* Subscription limit warning */}
+      {!productId && productLimits.currentCount > 0 && (
+        <div className={`mx-6 mt-6 p-4 rounded-md border ${
+          productLimits.canAddMore 
+            ? 'bg-blue-50 border-blue-200 text-blue-800' 
+            : 'bg-yellow-50 border-yellow-200 text-yellow-800'
+        }`}>
+          <p className="font-medium">
+            {productLimits.canAddMore ? (
+              `Vous avez ${productLimits.currentCount} produit(s) sur ${productLimits.limit} autorisés (${Math.round((productLimits.currentCount / productLimits.limit) * 100)}%)`
+            ) : (
+              'Vous avez atteint votre limite de produits'
+            )}
+          </p>
+          <p className="text-sm mt-1">
+            Abonnement actuel: {productLimits.planName}
+            {!productLimits.canAddMore && (
+              <button 
+                onClick={() => setShowUpgradeModal(true)}
+                className="ml-2 underline hover:text-blue-600"
+              >
+                Mettre à niveau
+              </button>
+            )}
+          </p>
+        </div>
+      )}
 
       {errors.length > 0 && (
         <div className="mx-6 mt-6 p-4 bg-red-50 border border-red-200 rounded-md">
@@ -571,11 +683,23 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
             isLoading={isLoading}
             icon={<Save size={16} />}
             iconPosition="left"
+            disabled={!productId && !productLimits.canAddMore}
           >
             {productId ? 'Enregistrer les modifications' : 'Ajouter le produit'}
           </Button>
         </div>
       </form>
+
+      <UpgradePlanModal
+        isOpen={showUpgradeModal}
+        onClose={() => setShowUpgradeModal(false)}
+        message={upgradeMessage}
+        currentPlan={productLimits.planName}
+        onUpgrade={() => {
+          navigate('/dashboard/subscriptions');
+          setShowUpgradeModal(false);
+        }}
+      />
     </div>
   );
 };

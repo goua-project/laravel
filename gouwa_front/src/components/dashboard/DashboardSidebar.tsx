@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useStore } from '../../contexts/StoreContext';
-import BoutiqueService from '../../services/boutiqueService';
+import BoutiqueService from '../../services/BoutiqueService';
 import { 
   LayoutDashboard, 
   Package, 
