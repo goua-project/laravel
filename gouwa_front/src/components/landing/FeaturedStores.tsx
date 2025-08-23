@@ -32,24 +32,46 @@ const FeaturedStores = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Fonction pour enregistrer une visite de boutique
+  // Fonction améliorée pour enregistrer une visite de boutique
   const recordBoutiqueView = async (boutiqueSlug) => {
     try {
-      await StatsService.recordView(boutiqueSlug);
-      console.log(`Visite enregistrée pour la boutique: ${boutiqueSlug}`);
+      console.log(`🔄 Tentative d'enregistrement de vue pour: ${boutiqueSlug}`);
+      
+      // Utiliser la méthode avec retry et enregistrement asynchrone
+      const result = await StatsService.recordViewWithRetry(boutiqueSlug, 2);
+      
+      if (result && result.success) {
+        console.log(`✅ Vue enregistrée avec succès pour: ${boutiqueSlug}`);
+      } else {
+        console.warn(`⚠️ Vue non enregistrée pour ${boutiqueSlug}:`, result?.error || 'Raison inconnue');
+      }
+      
+      return result;
+      
     } catch (error) {
-      console.error('Erreur lors de l\'enregistrement de la visite:', error);
+      console.error(`❌ Erreur lors de l'enregistrement de vue pour ${boutiqueSlug}:`, error);
+      
       // Ne pas bloquer la navigation même si l'enregistrement échoue
+      return { success: false, error: error.message };
     }
   };
 
-  // Fonction pour gérer le clic sur "Visiter la boutique"
+  // Fonction pour gérer le clic sur "Visiter la boutique" avec debounce
   const handleVisitStore = async (e, storeSlug) => {
-    // Enregistrer la visite de manière asynchrone
-    recordBoutiqueView(storeSlug);
-    
-    // La navigation se fera normalement via le Link
-    // Pas besoin de e.preventDefault() car on veut que la navigation se fasse
+    try {
+      // Enregistrer la visite de manière non-bloquante en arrière-plan
+      // On n'attend pas le résultat pour ne pas ralentir la navigation
+      StatsService.recordViewAsync(storeSlug);
+      
+      console.log(`🚀 Navigation vers la boutique: ${storeSlug}`);
+      
+      // La navigation se fera normalement via le Link
+      // Pas besoin de preventDefault() car on veut que la navigation se fasse
+      
+    } catch (error) {
+      console.warn(`Erreur silencieuse lors de l'enregistrement de vue:`, error);
+      // Ne pas empêcher la navigation
+    }
   };
 
   // Fonction pour charger les boutiques et leurs produits avec les vraies statistiques
@@ -58,83 +80,115 @@ const FeaturedStores = () => {
       setLoading(true);
       setError(null);
 
+      console.log('🔄 Chargement des boutiques...');
+
       // Récupérer toutes les boutiques
       const boutiquesResponse = await BoutiqueService.getAllBoutiques();
       const boutiques = boutiquesResponse.data || boutiquesResponse;
+
+      if (!Array.isArray(boutiques)) {
+        throw new Error('Format de données invalide pour les boutiques');
+      }
+
+      console.log(`📦 ${boutiques.length} boutiques récupérées`);
 
       // Pour chaque boutique, récupérer ses produits et ses statistiques
       const storesWithProducts = await Promise.all(
         boutiques.map(async (boutique) => {
           try {
-            // Récupérer les produits
-            const produitsResponse = await ProduitService.getAllProduits(boutique.id);
-            const produits = produitsResponse.data || produitsResponse || [];
+            console.log(`🏪 Traitement de la boutique: ${boutique.nom} (ID: ${boutique.id})`);
+            
+            // Récupérer les produits avec gestion d'erreur
+            let produits = [];
+            try {
+              const produitsResponse = await ProduitService.getAllProduits(boutique.id);
+              produits = produitsResponse.data || produitsResponse || [];
+            } catch (produitError) {
+              console.warn(`⚠️ Erreur produits pour boutique ${boutique.id}:`, produitError.message);
+              // Continuer sans produits
+            }
 
-            // Récupérer les statistiques de visite
-            let visitCount = Math.floor(Math.random() * 3000) + 500; // Valeur par défaut
+            // Récupérer les statistiques de visite avec fallback intelligent
+            let visitCount = Math.floor(Math.random() * 2000) + 800; // Valeur par défaut réaliste
+            
             try {
               const statsResponse = await StatsService.getBoutiqueStats(boutique.id, 'month');
-              if (statsResponse.success && statsResponse.data) {
-                visitCount = statsResponse.data.total_views || visitCount;
+              if (StatsService.hasValidStats(statsResponse)) {
+                visitCount = statsResponse.data.total_views;
+                console.log(`📊 Statistiques récupérées pour ${boutique.nom}: ${visitCount} vues`);
+              } else {
+                console.log(`📊 Statistiques par défaut pour ${boutique.nom}: ${visitCount} vues`);
               }
             } catch (statsError) {
-              console.log('Statistiques non disponibles pour la boutique', boutique.id);
-              // Garder la valeur par défaut
+              console.log(`📊 Statistiques non disponibles pour ${boutique.nom}, utilisation valeur par défaut`);
             }
 
             // Convertir les produits au format React et prendre seulement les 3 premiers
-            const formattedProduits = produits
-              .filter(produit => produit.visible !== false) // Filtrer les produits visibles
-              .slice(0, 3)
-              .map(produit => ({
-                id: produit.id,
-                name: produit.nom,
-                price: produit.prix,
-                images: produit.images && produit.images.length > 0 
-                  ? [ProduitService.getImageUrl(produit.images[0])]
-                  : ['https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=100'] // Image par défaut
-              }));
+            const formattedProduits = Array.isArray(produits) 
+              ? produits
+                  .filter(produit => produit && produit.visible !== false) // Filtrer les produits valides et visibles
+                  .slice(0, 3)
+                  .map(produit => ({
+                    id: produit.id,
+                    name: produit.nom || 'Produit sans nom',
+                    price: produit.prix || 0,
+                    images: produit.images && produit.images.length > 0 
+                      ? [ProduitService.getImageUrl(produit.images[0])]
+                      : ['https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=100'] // Image par défaut
+                  }))
+              : [];
+
+            // Générer ou récupérer le slug de manière sécurisée
+            const slug = boutique.slug || BoutiqueService.generateSlug(boutique.nom) || `boutique-${boutique.id}`;
 
             return {
               id: boutique.id,
-              name: boutique.nom,
-              slug: boutique.slug || BoutiqueService.generateSlug(boutique.nom),
-              type: boutique.categorie, // 'physical' ou 'digital'
+              name: boutique.nom || 'Boutique sans nom',
+              slug: slug,
+              type: boutique.categorie || 'physical', // Par défaut physique
               logo: boutique.logo 
                 ? BoutiqueService.getLogoUrl(boutique.logo)
                 : 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
-              slogan: boutique.slogan || 'Découvrez nos produits',
-              visitCount: visitCount, // Utiliser les vraies statistiques
+              slogan: boutique.slogan || 'Découvrez nos produits de qualité',
+              visitCount: visitCount,
               products: formattedProduits
             };
+            
           } catch (error) {
-            console.error(`Erreur lors du chargement des produits pour la boutique ${boutique.id}:`, error);
-            // Retourner la boutique sans produits en cas d'erreur
+            console.error(`❌ Erreur lors du traitement de la boutique ${boutique.id}:`, error);
+            
+            // Retourner une version minimale en cas d'erreur
             return {
               id: boutique.id,
-              name: boutique.nom,
-              slug: boutique.slug || BoutiqueService.generateSlug(boutique.nom),
-              type: boutique.categorie,
-              logo: boutique.logo 
-                ? BoutiqueService.getLogoUrl(boutique.logo)
-                : 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
-              slogan: boutique.slogan || 'Découvrez nos produits',
-              visitCount: Math.floor(Math.random() * 3000) + 500,
+              name: boutique.nom || 'Boutique',
+              slug: boutique.slug || `boutique-${boutique.id}`,
+              type: boutique.categorie || 'physical',
+              logo: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
+              slogan: 'Boutique en cours de configuration',
+              visitCount: Math.floor(Math.random() * 1000) + 200,
               products: []
             };
           }
         })
       );
 
-      setStores(storesWithProducts);
+      // Filtrer les boutiques null et valider les données
+      const validStores = storesWithProducts.filter(store => 
+        store && store.id && store.name && store.slug
+      );
+
+      console.log(`✅ ${validStores.length} boutiques traitées avec succès`);
+      setStores(validStores);
+
     } catch (error) {
-      console.error('Erreur lors du chargement des boutiques:', error);
-      setError('Erreur lors du chargement des boutiques');
+      console.error('❌ Erreur globale lors du chargement des boutiques:', error);
+      setError('Erreur lors du chargement des boutiques. Veuillez réessayer.');
     } finally {
       setLoading(false);
     }
   };
 
+  // Effect pour charger les données au montage du composant
   useEffect(() => {
     loadStoresWithProducts();
   }, []);
@@ -210,6 +264,7 @@ const FeaturedStores = () => {
     console.log('Navigation vers /create-store');
   };
 
+  // État de chargement
   if (loading) {
     return (
       <div className="bg-white">
@@ -217,7 +272,8 @@ const FeaturedStores = () => {
           <Container>
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto"></div>
-              <p className="mt-4 text-gray-600">Chargement des boutiques...</p>
+              <p className="mt-4 text-gray-600">Chargement des boutiques en cours...</p>
+              <p className="mt-2 text-sm text-gray-500">Cela peut prendre quelques secondes</p>
             </div>
           </Container>
         </section>
@@ -225,19 +281,32 @@ const FeaturedStores = () => {
     );
   }
 
+  // État d'erreur
   if (error) {
     return (
       <div className="bg-white">
         <section className="py-16">
           <Container>
             <div className="text-center">
-              <p className="text-red-600 mb-4">{error}</p>
-              <Button 
-                variant="primary" 
-                onClick={loadStoresWithProducts}
-              >
-                Réessayer
-              </Button>
+              <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md mx-auto">
+                <p className="text-red-600 mb-4 font-medium">{error}</p>
+                <Button 
+                  variant="primary" 
+                  onClick={loadStoresWithProducts}
+                  className="mr-3"
+                >
+                  🔄 Réessayer
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => {
+                    setError(null);
+                    setStores([]);
+                  }}
+                >
+                  Continuer sans boutiques
+                </Button>
+              </div>
             </div>
           </Container>
         </section>
@@ -266,7 +335,7 @@ const FeaturedStores = () => {
                     : 'text-gray-700 hover:text-gray-900'
                 }`}
               >
-                Produits Physiques
+                Produits Physiques ({stores.filter(s => s.type === 'physical').length})
               </button>
               <button
                 onClick={() => setActiveTab('digital')}
@@ -276,7 +345,7 @@ const FeaturedStores = () => {
                     : 'text-gray-700 hover:text-gray-900'
                 }`}
               >
-                Produits Digitaux
+                Produits Digitaux ({stores.filter(s => s.type === 'digital').length})
               </button>
             </div>
           </div>
@@ -295,7 +364,7 @@ const FeaturedStores = () => {
                   <div className="absolute inset-0 bg-black bg-opacity-20 group-hover:bg-opacity-30 transition-all"></div>
                   <div className="absolute bottom-0 left-0 right-0 p-4">
                     <div className="bg-white text-black px-2 py-1 rounded text-xs font-medium inline-block">
-                      {store.type === 'physical' ? 'Produits Physiques' : 'Produits Digitaux'}
+                      {store.type === 'physical' ? '🏪 Produits Physiques' : '💻 Produits Digitaux'}
                     </div>
                   </div>
                 </div>
@@ -306,7 +375,7 @@ const FeaturedStores = () => {
                       {store.name}
                     </h3>
                     <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                      {store.visitCount.toLocaleString()} visites
+                      👁️ {StatsService.formatViewCount(store.visitCount)}
                     </span>
                   </div>
                   
@@ -334,7 +403,7 @@ const FeaturedStores = () => {
                       ))
                     ) : (
                       <div className="text-center py-4">
-                        <p className="text-sm text-gray-500">Aucun produit disponible</p>
+                        <p className="text-sm text-gray-500">🔄 Produits en cours d'ajout</p>
                       </div>
                     )}
                   </div>
@@ -342,7 +411,7 @@ const FeaturedStores = () => {
                   <div className="mt-6">
                     <Link 
                       to={`/store/${store.slug}`} 
-                      className="flex items-center justify-center w-full text-orange-500 hover:text-orange-600 font-medium transition-colors"
+                      className="flex items-center justify-center w-full text-orange-500 hover:text-orange-600 font-medium transition-colors group-hover:bg-orange-50 py-2 rounded-lg"
                       onClick={(e) => handleVisitStore(e, store.slug)}
                     >
                       Visiter la boutique
@@ -356,9 +425,19 @@ const FeaturedStores = () => {
             {/* Empty State */}
             {filteredStores.length === 0 && (
               <div className="col-span-full py-8 text-center">
-                <p className="text-gray-500 mb-4">
-                  Aucune boutique {activeTab === 'physical' ? 'physique' : 'digitale'} disponible pour le moment.
-                </p>
+                <div className="bg-gray-50 rounded-lg p-8">
+                  <p className="text-gray-500 mb-4">
+                    🏪 Aucune boutique {activeTab === 'physical' ? 'physique' : 'digitale'} disponible pour le moment.
+                  </p>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Soyez le premier à créer votre boutique dans cette catégorie !
+                  </p>
+                  <Link to="/create-store">
+                    <Button variant="primary" icon={<ArrowRight size={16} />} iconPosition="right">
+                      Créer ma boutique
+                    </Button>
+                  </Link>
+                </div>
               </div>
             )}
           </div>
@@ -369,6 +448,7 @@ const FeaturedStores = () => {
                 variant="primary" 
                 icon={<ArrowRight size={16} />} 
                 iconPosition="right"
+                className="text-lg px-8 py-4"
               >
                 Créer ma boutique maintenant
               </Button>
@@ -403,7 +483,7 @@ const FeaturedStores = () => {
                 {plan.popular && (
                   <div className="absolute -top-4 left-1/2 transform -translate-x-1/2">
                     <span className="bg-gradient-to-r from-orange-500 to-orange-600 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg">
-                      Populaire
+                      ⭐ Populaire
                     </span>
                   </div>
                 )}
@@ -458,13 +538,13 @@ const FeaturedStores = () => {
                 variant="outline"
                 onClick={() => console.log('Comparer les plans')}
               >
-                Comparer les plans
+                📊 Comparer les plans
               </Button>
               <Button 
                 variant="primary"
                 onClick={() => console.log('Parler à un expert')}
               >
-                Parler à un expert
+                💬 Parler à un expert
               </Button>
             </div>
           </div>

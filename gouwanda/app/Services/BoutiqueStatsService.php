@@ -6,46 +6,163 @@ use App\Models\Boutique;
 use App\Models\BoutiqueView;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Request;
+use Illuminate\Support\Facades\Log;
 use Jenssegers\Agent\Agent;
 
 class BoutiqueStatsService
 {
     /**
-     * Enregistrer une vue de boutique
+     * Enregistrer une vue de boutique avec informations géographiques
      */
     public function recordView(Boutique $boutique, $request = null)
     {
-        if (!$request) {
-            $request = request();
-        }
+        try {
+            if (!$request) {
+                $request = request();
+            }
 
-        $agent = new Agent();
-        $agent->setUserAgent($request->userAgent());
+            $agent = new Agent();
+            $agent->setUserAgent($request->userAgent());
 
-        // Vérifier si c'est une vue unique (même IP dans les 30 dernières minutes)
-        $recentView = BoutiqueView::where('boutique_id', $boutique->id)
-            ->where('ip_address', $request->ip())
-            ->where('viewed_at', '>', Carbon::now()->subMinutes(30))
-            ->exists();
+            $ipAddress = $this->getRealIpAddress($request);
 
-        // Si pas de vue récente, enregistrer la nouvelle vue
-        if (!$recentView) {
-            BoutiqueView::create([
+            // Vérifier si c'est une vue unique (même IP dans les 30 dernières minutes)
+            $recentView = BoutiqueView::where('boutique_id', $boutique->id)
+                ->where('ip_address', $ipAddress)
+                ->where('viewed_at', '>', Carbon::now()->subMinutes(30))
+                ->exists();
+
+            // Si pas de vue récente, enregistrer la nouvelle vue
+            if (!$recentView) {
+                // Obtenir les informations géographiques
+                $geoInfo = $this->getGeolocationInfo($ipAddress);
+                
+                BoutiqueView::create([
+                    'boutique_id' => $boutique->id,
+                    'ip_address' => $ipAddress,
+                    'user_agent' => $request->userAgent(),
+                    'referrer' => $request->header('referer'),
+                    'country' => $geoInfo['country'] ?? null,
+                    'city' => $geoInfo['city'] ?? null,
+                    'device_type' => $this->getDeviceType($agent),
+                    'browser' => $agent->browser(),
+                    'os' => $agent->platform(),
+                    'viewed_at' => Carbon::now(),
+                ]);
+
+                // Log pour débug
+                Log::info('Vue de boutique enregistrée', [
+                    'boutique_id' => $boutique->id,
+                    'boutique_name' => $boutique->nom,
+                    'ip_address' => $ipAddress,
+                    'user_agent' => $request->userAgent(),
+                    'device_type' => $this->getDeviceType($agent),
+                    'country' => $geoInfo['country'] ?? null,
+                    'city' => $geoInfo['city'] ?? null,
+                ]);
+
+                return true;
+            }
+
+            Log::info('Vue de boutique non enregistrée (récente)', [
                 'boutique_id' => $boutique->id,
-                'ip_address' => $request->ip(),
-                'user_agent' => $request->userAgent(),
-                'referrer' => $request->header('referer'),
-                'device_type' => $this->getDeviceType($agent),
-                'browser' => $agent->browser(),
-                'os' => $agent->platform(),
-                'viewed_at' => Carbon::now(),
+                'ip_address' => $ipAddress
             ]);
 
-            return true;
+            return false;
+
+        } catch (\Exception $e) {
+            Log::error('Erreur lors de l\'enregistrement de la vue:', [
+                'boutique_id' => $boutique->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return false;
+        }
+    }
+
+    /**
+     * Obtenir la vraie adresse IP du visiteur
+     */
+    private function getRealIpAddress($request)
+    {
+        // Vérifier plusieurs en-têtes possibles pour l'IP réelle
+        $ipKeys = [
+            'HTTP_CF_CONNECTING_IP',     // CloudFlare
+            'HTTP_X_REAL_IP',            // Nginx proxy
+            'HTTP_X_FORWARDED_FOR',      // Proxy standard
+            'HTTP_X_FORWARDED',          // Proxy
+            'HTTP_X_CLUSTER_CLIENT_IP',  // Cluster
+            'HTTP_FORWARDED_FOR',        // Proxy
+            'HTTP_FORWARDED',            // Proxy
+            'REMOTE_ADDR'                // IP standard
+        ];
+
+        foreach ($ipKeys as $key) {
+            if (array_key_exists($key, $_SERVER) === true) {
+                $ip = $_SERVER[$key];
+                if (strpos($ip, ',') !== false) {
+                    $ip = explode(',', $ip)[0];
+                }
+                $ip = trim($ip);
+                
+                if (filter_var($ip, FILTER_VALIDATE_IP, 
+                    FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return $ip;
+                }
+            }
         }
 
-        return false;
+        return $request->ip();
+    }
+
+    /**
+     * Obtenir les informations de géolocalisation
+     */
+    private function getGeolocationInfo($ip)
+    {
+        try {
+            // Ne pas faire de géolocalisation pour les IPs locales
+            if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return [
+                    'country' => 'Local',
+                    'city' => 'Local'
+                ];
+            }
+
+            // Utiliser un service de géolocalisation gratuit
+            $url = "http://ip-api.com/json/{$ip}";
+            $context = stream_context_create([
+                'http' => [
+                    'timeout' => 3, // Timeout de 3 secondes
+                    'method' => 'GET'
+                ]
+            ]);
+            
+            $response = @file_get_contents($url, false, $context);
+            
+            if ($response) {
+                $data = json_decode($response, true);
+                if ($data && $data['status'] === 'success') {
+                    return [
+                        'country' => $data['country'] ?? null,
+                        'city' => $data['city'] ?? null
+                    ];
+                }
+            }
+
+        } catch (\Exception $e) {
+            Log::warning('Erreur géolocalisation IP:', [
+                'ip' => $ip,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return [
+            'country' => null,
+            'city' => null
+        ];
     }
 
     /**
@@ -57,12 +174,15 @@ class BoutiqueStatsService
 
         switch ($period) {
             case 'today':
-                $query->today();
+                $query->whereDate('viewed_at', Carbon::today());
                 $previousQuery = BoutiqueView::where('boutique_id', $boutique->id)
                     ->whereDate('viewed_at', Carbon::yesterday());
                 break;
             case 'week':
-                $query->thisWeek();
+                $query->whereBetween('viewed_at', [
+                    Carbon::now()->startOfWeek(),
+                    Carbon::now()->endOfWeek()
+                ]);
                 $previousQuery = BoutiqueView::where('boutique_id', $boutique->id)
                     ->whereBetween('viewed_at', [
                         Carbon::now()->subWeek()->startOfWeek(),
@@ -70,18 +190,20 @@ class BoutiqueStatsService
                     ]);
                 break;
             case 'month':
-                $query->thisMonth();
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
                 $previousQuery = BoutiqueView::where('boutique_id', $boutique->id)
                     ->whereMonth('viewed_at', Carbon::now()->subMonth()->month)
                     ->whereYear('viewed_at', Carbon::now()->subMonth()->year);
                 break;
             case 'year':
-                $query->thisYear();
+                $query->whereYear('viewed_at', Carbon::now()->year);
                 $previousQuery = BoutiqueView::where('boutique_id', $boutique->id)
                     ->whereYear('viewed_at', Carbon::now()->subYear()->year);
                 break;
             default:
-                $query->thisMonth();
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
                 $previousQuery = BoutiqueView::where('boutique_id', $boutique->id)
                     ->whereMonth('viewed_at', Carbon::now()->subMonth()->month)
                     ->whereYear('viewed_at', Carbon::now()->subMonth()->year);
@@ -115,16 +237,20 @@ class BoutiqueStatsService
 
         switch ($period) {
             case 'today':
-                $query->today();
+                $query->whereDate('viewed_at', Carbon::today());
                 break;
             case 'week':
-                $query->thisWeek();
+                $query->whereBetween('viewed_at', [
+                    Carbon::now()->startOfWeek(),
+                    Carbon::now()->endOfWeek()
+                ]);
                 break;
             case 'month':
-                $query->thisMonth();
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
                 break;
             case 'year':
-                $query->thisYear();
+                $query->whereYear('viewed_at', Carbon::now()->year);
                 break;
         }
 
@@ -143,7 +269,7 @@ class BoutiqueStatsService
 
         $views = BoutiqueView::where('boutique_id', $boutique->id)
             ->whereBetween('viewed_at', [$startDate, $endDate])
-            ->selectRaw('DATE(viewed_at) as date, COUNT(*) as views')
+            ->selectRaw('DATE(viewed_at) as date, COUNT(*) as views, COUNT(DISTINCT ip_address) as unique_views')
             ->groupBy('date')
             ->orderBy('date')
             ->get()
@@ -152,9 +278,12 @@ class BoutiqueStatsService
         $chartData = [];
         for ($date = $startDate->copy(); $date <= $endDate; $date->addDay()) {
             $dateString = $date->format('Y-m-d');
+            $viewData = $views->get($dateString);
+            
             $chartData[] = [
                 'date' => $dateString,
-                'views' => $views->get($dateString)->views ?? 0,
+                'views' => $viewData ? $viewData->views : 0,
+                'unique_views' => $viewData ? $viewData->unique_views : 0,
                 'formatted_date' => $date->format('d/m')
             ];
         }
@@ -171,16 +300,20 @@ class BoutiqueStatsService
 
         switch ($period) {
             case 'today':
-                $query->today();
+                $query->whereDate('viewed_at', Carbon::today());
                 break;
             case 'week':
-                $query->thisWeek();
+                $query->whereBetween('viewed_at', [
+                    Carbon::now()->startOfWeek(),
+                    Carbon::now()->endOfWeek()
+                ]);
                 break;
             case 'month':
-                $query->thisMonth();
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
                 break;
             case 'year':
-                $query->thisYear();
+                $query->whereYear('viewed_at', Carbon::now()->year);
                 break;
         }
 
@@ -193,6 +326,40 @@ class BoutiqueStatsService
     }
 
     /**
+     * Obtenir les statistiques par pays
+     */
+    public function getCountryStats(Boutique $boutique, $period = 'month')
+    {
+        $query = BoutiqueView::where('boutique_id', $boutique->id);
+
+        switch ($period) {
+            case 'today':
+                $query->whereDate('viewed_at', Carbon::today());
+                break;
+            case 'week':
+                $query->whereBetween('viewed_at', [
+                    Carbon::now()->startOfWeek(),
+                    Carbon::now()->endOfWeek()
+                ]);
+                break;
+            case 'month':
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
+                break;
+            case 'year':
+                $query->whereYear('viewed_at', Carbon::now()->year);
+                break;
+        }
+
+        return $query->select('country', DB::raw('COUNT(*) as count'))
+                    ->whereNotNull('country')
+                    ->groupBy('country')
+                    ->orderByDesc('count')
+                    ->limit(10)
+                    ->get();
+    }
+
+    /**
      * Obtenir les statistiques par navigateur
      */
     public function getBrowserStats(Boutique $boutique, $period = 'month')
@@ -201,16 +368,20 @@ class BoutiqueStatsService
 
         switch ($period) {
             case 'today':
-                $query->today();
+                $query->whereDate('viewed_at', Carbon::today());
                 break;
             case 'week':
-                $query->thisWeek();
+                $query->whereBetween('viewed_at', [
+                    Carbon::now()->startOfWeek(),
+                    Carbon::now()->endOfWeek()
+                ]);
                 break;
             case 'month':
-                $query->thisMonth();
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
                 break;
             case 'year':
-                $query->thisYear();
+                $query->whereYear('viewed_at', Carbon::now()->year);
                 break;
         }
 
@@ -231,16 +402,20 @@ class BoutiqueStatsService
 
         switch ($period) {
             case 'today':
-                $query->today();
+                $query->whereDate('viewed_at', Carbon::today());
                 break;
             case 'week':
-                $query->thisWeek();
+                $query->whereBetween('viewed_at', [
+                    Carbon::now()->startOfWeek(),
+                    Carbon::now()->endOfWeek()
+                ]);
                 break;
             case 'month':
-                $query->thisMonth();
+                $query->whereMonth('viewed_at', Carbon::now()->month)
+                      ->whereYear('viewed_at', Carbon::now()->year);
                 break;
             case 'year':
-                $query->thisYear();
+                $query->whereYear('viewed_at', Carbon::now()->year);
                 break;
         }
 
@@ -261,6 +436,7 @@ class BoutiqueStatsService
             'views' => $this->getViewStats($boutique, $period),
             'chart_data' => $this->getViewsChartData($boutique, $this->getDaysForPeriod($period)),
             'devices' => $this->getDeviceStats($boutique, $period),
+            'countries' => $this->getCountryStats($boutique, $period),
             'browsers' => $this->getBrowserStats($boutique, $period),
             'referrers' => $this->getReferrerStats($boutique, $period),
         ];

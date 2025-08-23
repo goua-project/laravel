@@ -109,23 +109,69 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 
-// Routes protégées par authentification
-Route::middleware(['auth:sanctum'])->group(function () {
+// Routes pour les statistiques de boutique - VERSION CORRIGÉE
+Route::prefix('boutiques/stats')->group(function () {
     
-    // Statistiques des boutiques de l'utilisateur
-    Route::get('/boutiques/stats', [BoutiqueStatsController::class, 'getAllBoutiquesStats']);
+    // Routes publiques (pas d'authentification requise)
+    // IMPORTANT: Ces routes doivent être AVANT les routes avec paramètres dynamiques
+    Route::post('record-view/{slug}', [BoutiqueStatsController::class, 'recordViewBySlug'])
+        ->name('boutique.stats.record-view-slug');
     
-    // Statistiques d'une boutique spécifique
-    Route::get('/boutiques/{boutiqueId}/stats', [BoutiqueStatsController::class, 'getViewStats']);
+    Route::post('record-view/id/{id}', [BoutiqueStatsController::class, 'recordViewById'])
+        ->name('boutique.stats.record-view-id')
+        ->where('id', '[0-9]+'); // Contraindre l'ID aux nombres uniquement
     
-    // Statistiques simplifiées pour le dashboard
-    Route::get('/boutiques/{boutiqueId}/dashboard-stats', [BoutiqueStatsController::class, 'getDashboardStats']);
+    // Routes protégées (authentification requise)
+    Route::middleware(['auth:sanctum'])->group(function () {
+        
+        // ROUTES SPÉCIFIQUES AVANT LES ROUTES GÉNÉRIQUES
+        
+        // Statistiques simplifiées pour le dashboard
+        Route::get('dashboard/{id}', [BoutiqueStatsController::class, 'getDashboardStats'])
+            ->name('boutique.stats.dashboard')
+            ->where('id', '[0-9]+');
+        
+        // Statistiques de toutes les boutiques de l'utilisateur
+        // ATTENTION: Cette route doit être AVANT la route {id}
+        Route::get('all', [BoutiqueStatsController::class, 'getAllBoutiquesStats'])
+            ->name('boutique.stats.all');
+        
+        // Statistiques complètes d'une boutique
+        // CETTE ROUTE DOIT ÊTRE EN DERNIER car elle capture tout ce qui n'a pas matché avant
+        Route::get('{id}', [BoutiqueStatsController::class, 'getBoutiqueStats'])
+            ->name('boutique.stats.show')
+            ->where('id', '[0-9]+');
+    });
 });
 
-// Routes publiques
-Route::group(['prefix' => 'public'], function () {
+// Alternative recommandée: Structure plus claire
+Route::prefix('boutiques')->group(function () {
     
-    // Enregistrer une vue de boutique (appelé depuis le frontend public)
-    Route::post('/boutiques/{boutiqueSlug}/view', [BoutiqueStatsController::class, 'recordView']);
+    // Routes pour l'enregistrement des vues (publiques)
+    Route::prefix('views')->group(function () {
+        Route::post('record/{slug}', [BoutiqueStatsController::class, 'recordViewBySlug'])
+            ->name('boutique.views.record-slug');
+        
+        Route::post('record/id/{id}', [BoutiqueStatsController::class, 'recordViewById'])
+            ->name('boutique.views.record-id')
+            ->where('id', '[0-9]+');
+    });
     
+    // Routes pour les statistiques (désormais publiques)
+    Route::prefix('stats')->group(function () {
+        
+        // Route pour toutes les boutiques de l'utilisateur
+        Route::get('/', [BoutiqueStatsController::class, 'getAllBoutiquesStats'])
+            ->name('boutique.stats.all');
+        
+        // Routes spécifiques par boutique
+        Route::prefix('{id}')->where(['id' => '[0-9]+'])->group(function () {
+            Route::get('/', [BoutiqueStatsController::class, 'getBoutiqueStats'])
+                ->name('boutique.stats.show');
+            
+            Route::get('dashboard', [BoutiqueStatsController::class, 'getDashboardStats'])
+                ->name('boutique.stats.dashboard');
+        });
+    });
 });
+

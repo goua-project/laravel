@@ -3,129 +3,228 @@ import api from './apiService';
 class StatsService {
   
   /**
-   * Enregistrer une visite de boutique
-   * @param {string} boutiqueSlug - Le slug de la boutique  
-   * @returns {Promise} - Response de l'API
+   * Récupérer les statistiques du dashboard avec gestion d'erreur améliorée
+   */
+  static async getDashboardStats(boutiqueId, period = 'month') {
+    try {
+      console.log(`📊 Récupération des stats dashboard pour boutique ${boutiqueId}, période: ${period}`);
+      
+      if (!api || typeof api.get !== 'function') {
+        console.warn('API service non disponible pour les statistiques dashboard');
+        return this.getEmptyDashboardStats();
+      }
+
+      // Vérifier l'authentification avant la requête
+      if (!api.isAuthenticated()) {
+        console.warn('🚨 Utilisateur non authentifié pour les statistiques');
+        return {
+          success: false,
+          error: 'Authentification requise',
+          data: this.getEmptyDashboardStats().data
+        };
+      }
+
+      const response = await api.get(`/boutiques/stats/${boutiqueId}/dashboard`, {
+        params: { period },
+        includeAuth: true
+      });
+      
+      console.log('✅ Réponse dashboard stats:', response);
+      
+      if (response && response.success && response.data) {
+        return {
+          success: true,
+          data: {
+            total_views: response.data.total_views || 0,
+            unique_views: response.data.unique_views || 0,
+            previous_views: response.data.previous_views || 0,
+            growth_rate: response.data.growth_rate || 0
+          }
+        };
+      }
+      
+      return response || this.getEmptyDashboardStats();
+      
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des statistiques du dashboard:', error);
+      
+      // Gestion spécifique des erreurs
+      if (error.status === 401) {
+        return {
+          success: false,
+          error: 'Session expirée, veuillez vous reconnecter',
+          data: this.getEmptyDashboardStats().data,
+          requireAuth: true
+        };
+      }
+      
+      if (error.status === 404) {
+        return {
+          success: false,
+          error: 'Boutique non trouvée ou accès non autorisé',
+          data: this.getEmptyDashboardStats().data
+        };
+      }
+      
+      if (error.status === 500) {
+        return {
+          success: false,
+          error: 'Erreur serveur temporaire, veuillez réessayer',
+          data: this.getEmptyDashboardStats().data
+        };
+      }
+      
+      return {
+        success: false,
+        error: error.message || 'Erreur inconnue',
+        data: this.getEmptyDashboardStats().data
+      };
+    }
+  }
+
+  /**
+   * Récupérer les statistiques complètes avec retry automatique
+   */
+  static async getBoutiqueStats(boutiqueId, period = 'month', retryCount = 0) {
+    try {
+      console.log(`📊 Récupération des stats complètes pour boutique ${boutiqueId}, période: ${period}`);
+      
+      if (!api || typeof api.get !== 'function') {
+        console.warn('API service non disponible pour les statistiques');
+        return this.getEmptyStats();
+      }
+
+      // Vérifier l'authentification
+      if (!api.isAuthenticated()) {
+        console.warn('🚨 Utilisateur non authentifié');
+        return {
+          success: false,
+          error: 'Authentification requise',
+          data: this.getEmptyStats().data
+        };
+      }
+
+      const cacheKey = `boutique_stats_${boutiqueId}_${period}`;
+      const cachedStats = this.getCachedStats(cacheKey);
+      if (cachedStats && retryCount === 0) {
+        console.log('📦 Statistiques récupérées du cache:', cacheKey);
+        return cachedStats;
+      }
+
+      const response = await api.get(`/boutiques/stats/${boutiqueId}`, {
+        params: { period },
+        includeAuth: true
+      });
+      
+      if (response && response.success && response.data) {
+        this.cacheStats(cacheKey, response, 5);
+        return response;
+      }
+      
+      return response || this.getEmptyStats();
+      
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des statistiques complètes:', error);
+      
+      // Retry une fois en cas d'erreur 401 après refresh du token
+      if (error.status === 401 && retryCount === 0) {
+        console.log('🔄 Tentative de retry après erreur 401...');
+        await api.refreshTokenIfNeeded();
+        return this.getBoutiqueStats(boutiqueId, period, 1);
+      }
+      
+      return {
+        success: false,
+        error: error.message || 'Erreur inconnue',
+        data: this.getEmptyStats().data
+      };
+    }
+  }
+
+  /**
+   * Enregistrer une vue avec retry et gestion d'erreur améliorée
    */
   static async recordView(boutiqueSlug) {
     try {
-      // ✅ Vérifier que l'API est disponible
       if (!api || typeof api.post !== 'function') {
         console.warn('API service non disponible pour l\'enregistrement de visite');
         return { success: false, message: 'Service non disponible' };
       }
 
-      const response = await api.post(`/boutiques/stats/record-view/${boutiqueSlug}`, {
+      if (!boutiqueSlug) {
+        console.warn('⚠️ Slug de boutique manquant pour l\'enregistrement de vue');
+        return { success: false, message: 'Slug de boutique manquant' };
+      }
+
+      const viewData = {
         timestamp: new Date().toISOString(),
         user_agent: navigator.userAgent,
         referrer: document.referrer || null,
         screen_resolution: `${screen.width}x${screen.height}`,
-        language: navigator.language
-      });
-      
-      return response;
-    } catch (error) {
-      console.error('Erreur lors de l\'enregistrement de la visite:', error);
-      
-      // ✅ Ne pas faire échouer l'application si l'enregistrement échoue
-      return { success: false, error: error.message };
-    }
-  }
+        language: navigator.language,
+        platform: navigator.platform,
+        cookies_enabled: navigator.cookieEnabled,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        url: window.location.href,
+        page_title: document.title
+      };
 
-  /**
-   * Récupérer les statistiques complètes d'une boutique
-   * @param {number} boutiqueId - L'ID de la boutique
-   * @param {string} period - La période (today, week, month, year)
-   * @returns {Promise} - Les statistiques complètes de la boutique
-   */
-  static async getBoutiqueStats(boutiqueId, period = 'month') {
-    try {
-      // ✅ Vérifier que l'API est disponible
-      if (!api || typeof api.get !== 'function') {
-        console.warn('API service non disponible pour les statistiques');
-        // Retourner des données par défaut
-        return {
-          success: false,
-          data: {
-            total_views: Math.floor(Math.random() * 3000) + 500,
-            unique_views: Math.floor(Math.random() * 2000) + 300,
-            chart_data: []
-          }
-        };
-      }
+      console.log('👁️ Enregistrement de la vue pour:', boutiqueSlug);
 
-      const response = await api.get(`/boutiques/stats/${boutiqueId}`, {
-        params: { period },
+      const response = await api.post(`/boutiques/views/record/${boutiqueSlug}`, viewData, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-          'Accept': 'application/json'
-        }
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        skipAuthToken: true
       });
       
-      return response;
-    } catch (error) {
-      console.error('Erreur lors de la récupération des statistiques:', error);
+      console.log('✅ Réponse enregistrement vue:', response);
       
-      // ✅ Retourner des données par défaut en cas d'erreur
-      return {
-        success: false,
-        data: {
-          total_views: Math.floor(Math.random() * 3000) + 500,
-          unique_views: Math.floor(Math.random() * 2000) + 300,
-          chart_data: [],
-          error: error.message
-        }
+      if (response && response.success) {
+        return response;
+      }
+      
+      return { success: false, message: 'Erreur lors de l\'enregistrement' };
+      
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'enregistrement de la visite:', error);
+      
+      return { 
+        success: false, 
+        error: error.message || 'Erreur inconnue'
       };
     }
   }
 
-  /**
-   * Récupérer les statistiques simples pour le dashboard
-   * @param {number} boutiqueId - L'ID de la boutique
-   * @param {string} period - La période
-   * @returns {Promise} - Les statistiques simplifiées
-   */
-  static async getDashboardStats(boutiqueId, period = 'month') {
-    try {
-      if (!api || typeof api.get !== 'function') {
-        console.warn('API service non disponible pour les statistiques dashboard');
-        return {
-          success: false,
-          data: {
-            total_views: Math.floor(Math.random() * 3000) + 500,
-            growth_rate: Math.floor(Math.random() * 40) - 20
-          }
-        };
+  // Méthodes utilitaires pour les statistiques vides
+  static getEmptyDashboardStats() {
+    return {
+      success: true,
+      data: {
+        total_views: 0,
+        unique_views: 0,
+        previous_views: 0,
+        growth_rate: 0
       }
-
-      const response = await api.get(`/boutiques/stats/dashboard/${boutiqueId}`, {
-        params: { period },
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-          'Accept': 'application/json'
-        }
-      });
-      
-      return response;
-    } catch (error) {
-      console.error('Erreur lors de la récupération des statistiques du dashboard:', error);
-      
-      return {
-        success: false,
-        data: {
-          total_views: Math.floor(Math.random() * 3000) + 500,
-          growth_rate: Math.floor(Math.random() * 40) - 20,
-          error: error.message
-        }
-      };
-    }
+    };
   }
 
-  /**
-   * Récupérer les statistiques de toutes les boutiques de l'utilisateur
-   * @param {string} period - La période
-   * @returns {Promise} - Les statistiques de toutes les boutiques
-   */
+  static getEmptyStats() {
+    return {
+      success: true,
+      data: {
+        total_views: 0,
+        unique_views: 0,
+        previous_views: 0,
+        growth_rate: 0,
+        chart_data: []
+      }
+    };
+  }
+
+  // Méthodes existantes conservées...
   static async getAllBoutiquesStats(period = 'month') {
     try {
       if (!api || typeof api.get !== 'function') {
@@ -133,65 +232,127 @@ class StatsService {
         return { success: false, data: [] };
       }
 
-      const response = await api.get('/boutiques/stats/all', {
+      if (!api.isAuthenticated()) {
+        return {
+          success: false,
+          error: 'Authentification requise',
+          data: []
+        };
+      }
+
+      const response = await api.get('/boutiques/stats', {
         params: { period },
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-          'Accept': 'application/json'
-        }
+        includeAuth: true
       });
       
-      return response;
+      return response || { success: false, data: [] };
+      
     } catch (error) {
-      console.error('Erreur lors de la récupération de toutes les statistiques:', error);
-      return { success: false, data: [], error: error.message };
+      console.error('❌ Erreur lors de la récupération de toutes les statistiques:', error);
+      return { 
+        success: false, 
+        data: [], 
+        error: error.message 
+      };
     }
   }
 
-  /**
-   * Gérer les erreurs de l'API - Version améliorée
-   * @param {Error} error - L'erreur de l'API
-   */
+  static async getViewsStats(boutiqueId, period = 'month') {
+    try {
+      if (!api.isAuthenticated()) {
+        return {
+          success: false,
+          error: 'Authentification requise',
+          data: {
+            total_views: 0,
+            unique_views: 0,
+            previous_views: 0,
+            growth_rate: 0,
+            views_by_period: []
+          }
+        };
+      }
+
+      const cacheKey = `views_stats_${boutiqueId}_${period}`;
+      const cachedStats = this.getCachedStats(cacheKey);
+      if (cachedStats) {
+        console.log('📦 Statistiques de vues récupérées du cache:', cacheKey);
+        return cachedStats;
+      }
+
+      const response = await api.get(`/boutiques/stats/${boutiqueId}/views`, {
+        params: { period },
+        includeAuth: true
+      });
+
+      if (response && response.success && response.data) {
+        this.cacheStats(cacheKey, response, 2); // Cache plus court pour les vues
+        return response;
+      }
+
+      return response || {
+        success: false,
+        data: {
+          total_views: 0,
+          unique_views: 0,
+          previous_views: 0,
+          growth_rate: 0,
+          views_by_period: []
+        }
+      };
+
+    } catch (error) {
+      console.error('❌ Erreur lors de la récupération des statistiques de vues:', error);
+      
+      return {
+        success: false,
+        error: error.message || 'Erreur inconnue',
+        data: {
+          total_views: 0,
+          unique_views: 0,
+          previous_views: 0,
+          growth_rate: 0,
+          views_by_period: []
+        }
+      };
+    }
+  }
+
+  // Méthodes utilitaires et de cache
   static handleApiError(error) {
-    console.log('Gestion d\'erreur API:', error);
+    console.log('🔧 Gestion d\'erreur API:', error);
     
-    // ✅ Vérifier si c'est vraiment une erreur de réponse HTTP
-    if (error && error.status) {
-      const { status, data } = error;
+    if (error && error.response && error.response.status) {
+      const { status, data } = error.response;
       
       switch (status) {
         case 401:
-          // Token expiré ou invalide
-          localStorage.removeItem('auth_token');
-          console.warn('Token expiré - redirection nécessaire');
-          // Ne pas rediriger automatiquement pour éviter les boucles
+          console.warn('🚨 Token expiré - authentification requise');
+          api.removeToken();
           break;
         case 403:
-          console.error('Accès refusé:', data?.message || 'Accès refusé');
+          console.error('❌ Accès refusé:', data?.message || 'Accès refusé');
           break;
         case 404:
-          console.error('Ressource non trouvée:', data?.message || 'Ressource non trouvée');
+          console.error('❌ Ressource non trouvée:', data?.message || 'Ressource non trouvée');
           break;
         case 422:
-          console.error('Données invalides:', data?.errors || data?.message || 'Données invalides');
+          console.error('❌ Données invalides:', data?.errors || data?.message || 'Données invalides');
+          break;
+        case 429:
+          console.error('❌ Trop de requêtes:', data?.message || 'Trop de requêtes');
           break;
         case 500:
-          console.error('Erreur serveur:', data?.message || 'Erreur serveur');
+          console.error('❌ Erreur serveur:', data?.message || 'Erreur serveur');
           break;
         default:
-          console.error('Erreur inconnue:', data?.message || error.message || 'Erreur inconnue');
+          console.error('❌ Erreur inconnue:', data?.message || error.message || 'Erreur inconnue');
       }
     } else {
-      // Erreur réseau ou autre
-      console.error('Erreur:', error?.message || 'Erreur inconnue');
+      console.error('❌ Erreur:', error?.message || 'Erreur inconnue');
     }
   }
 
-  /**
-   * Formater les données pour les graphiques
-   * @param {Array} chartData - Les données brutes du graphique
-   * @returns {Array} - Les données formatées
-   */
   static formatChartData(chartData) {
     if (!Array.isArray(chartData)) {
       return [];
@@ -205,25 +366,19 @@ class StatsService {
     }));
   }
 
-  /**
-   * Formater une date pour l'affichage
-   * @param {string} dateString - La date au format string
-   * @returns {string} - La date formatée
-   */
   static formatDate(dateString) {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('fr-FR', { 
-      day: '2-digit', 
-      month: '2-digit' 
-    });
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('fr-FR', { 
+        day: '2-digit', 
+        month: '2-digit' 
+      });
+    } catch (error) {
+      console.warn('⚠️ Erreur de formatage de date:', dateString);
+      return dateString;
+    }
   }
 
-  /**
-   * Calculer le taux de croissance
-   * @param {number} current - Valeur actuelle
-   * @param {number} previous - Valeur précédente
-   * @returns {number} - Le taux de croissance en pourcentage
-   */
   static calculateGrowthRate(current, previous) {
     if (previous === 0) {
       return current > 0 ? 100 : 0;
@@ -232,24 +387,17 @@ class StatsService {
     return Math.round(((current - previous) / previous) * 100 * 10) / 10;
   }
 
-  /**
-   * Formater le nombre de visites pour l'affichage
-   * @param {number} count - Le nombre de visites
-   * @returns {string} - Le nombre formaté
-   */
   static formatViewCount(count) {
-    if (count >= 1000000) {
-      return (count / 1000000).toFixed(1) + 'M';
-    } else if (count >= 1000) {
-      return (count / 1000).toFixed(1) + 'K';
+    const numCount = parseInt(count) || 0;
+    
+    if (numCount >= 1000000) {
+      return (numCount / 1000000).toFixed(1) + 'M';
+    } else if (numCount >= 1000) {
+      return (numCount / 1000).toFixed(1) + 'K';
     }
-    return count.toString();
+    return numCount.toString();
   }
 
-  /**
-   * Obtenir les périodes disponibles
-   * @returns {Array} - Liste des périodes avec leurs labels
-   */
   static getPeriods() {
     return [
       { value: 'today', label: 'Aujourd\'hui' },
@@ -259,11 +407,6 @@ class StatsService {
     ];
   }
 
-  /**
-   * Vérifier si les statistiques sont disponibles
-   * @param {Object} stats - L'objet des statistiques
-   * @returns {boolean} - true si les stats sont valides
-   */
   static hasValidStats(stats) {
     return stats && 
            typeof stats === 'object' && 
@@ -274,34 +417,22 @@ class StatsService {
            stats.data.total_views >= 0;
   }
 
-  /**
-   * Obtenir la couleur pour le taux de croissance
-   * @param {number} growth - Le taux de croissance
-   * @returns {string} - La classe CSS pour la couleur
-   */
   static getGrowthColor(growth) {
-    if (growth > 0) return 'text-green-600';
-    if (growth < 0) return 'text-red-600';
+    const numGrowth = parseFloat(growth) || 0;
+    
+    if (numGrowth > 0) return 'text-green-600';
+    if (numGrowth < 0) return 'text-red-600';
     return 'text-gray-600';
   }
 
-  /**
-   * Obtenir l'icône pour le taux de croissance
-   * @param {number} growth - Le taux de croissance
-   * @returns {string} - Le nom de l'icône
-   */
   static getGrowthIcon(growth) {
-    if (growth > 0) return 'arrow-up';
-    if (growth < 0) return 'arrow-down';
+    const numGrowth = parseFloat(growth) || 0;
+    
+    if (numGrowth > 0) return 'arrow-up';
+    if (numGrowth < 0) return 'arrow-down';
     return 'minus';
   }
 
-  /**
-   * Debounce une fonction (utile pour les recherches)
-   * @param {Function} func - La fonction à debouncer
-   * @param {number} wait - Le délai d'attente en ms
-   * @returns {Function} - La fonction debouncée
-   */
   static debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
@@ -314,31 +445,22 @@ class StatsService {
     };
   }
 
-  /**
-   * Mettre en cache les statistiques localement
-   * @param {string} key - La clé de cache
-   * @param {Object} data - Les données à mettre en cache
-   * @param {number} duration - Durée du cache en minutes (défaut: 5)
-   */
+  // Méthodes de cache améliorées
   static cacheStats(key, data, duration = 5) {
     const cacheItem = {
       data,
       timestamp: Date.now(),
-      duration: duration * 60 * 1000 // Convertir en millisecondes
+      duration: duration * 60 * 1000
     };
     
     try {
       localStorage.setItem(`stats_cache_${key}`, JSON.stringify(cacheItem));
+      console.log('📦 Stats mises en cache:', key);
     } catch (error) {
-      console.warn('Impossible de mettre en cache:', error);
+      console.warn('⚠️ Impossible de mettre en cache:', error);
     }
   }
 
-  /**
-   * Récupérer les statistiques du cache
-   * @param {string} key - La clé de cache
-   * @returns {Object|null} - Les données du cache ou null si expiré/inexistant
-   */
   static getCachedStats(key) {
     try {
       const cached = localStorage.getItem(`stats_cache_${key}`);
@@ -347,29 +469,145 @@ class StatsService {
       const cacheItem = JSON.parse(cached);
       const now = Date.now();
 
-      // Vérifier si le cache a expiré
       if (now - cacheItem.timestamp > cacheItem.duration) {
         localStorage.removeItem(`stats_cache_${key}`);
+        console.log('🗑️ Cache expiré supprimé:', key);
         return null;
       }
 
       return cacheItem.data;
     } catch (error) {
-      console.warn('Erreur lors de la récupération du cache:', error);
+      console.warn('⚠️ Erreur lors de la récupération du cache:', error);
       return null;
     }
   }
 
-  /**
-   * Vider le cache des statistiques
-   */
   static clearStatsCache() {
-    const keys = Object.keys(localStorage);
-    keys.forEach(key => {
-      if (key.startsWith('stats_cache_')) {
-        localStorage.removeItem(key);
+    try {
+      const keys = Object.keys(localStorage);
+      const deletedKeys = [];
+      
+      keys.forEach(key => {
+        if (key.startsWith('stats_cache_')) {
+          localStorage.removeItem(key);
+          deletedKeys.push(key);
+        }
+      });
+      
+      console.log('🗑️ Cache des statistiques nettoyé:', deletedKeys.length, 'entrées supprimées');
+    } catch (error) {
+      console.warn('⚠️ Erreur lors du nettoyage du cache:', error);
+    }
+  }
+
+  // Méthodes avancées avec retry
+  static async recordViewWithRetry(boutiqueSlug, maxRetries = 3) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`👁️ Tentative ${attempt}/${maxRetries} d'enregistrement de vue pour: ${boutiqueSlug}`);
+        
+        const result = await this.recordView(boutiqueSlug);
+        
+        if (result.success) {
+          console.log('✅ Enregistrement de vue réussi à la tentative', attempt);
+          return result;
+        }
+        
+        // Ne pas retry pour les erreurs 404 ou 403
+        if (result.status && [404, 403].includes(result.status)) {
+          console.warn('⚠️ Arrêt des tentatives pour erreur définitive:', result.status);
+          return result;
+        }
+        
+        if (attempt === maxRetries) {
+          console.warn('⚠️ Échec après toutes les tentatives');
+          return result;
+        }
+        
+        // Délai exponentiel entre les tentatives
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`⏳ Attente de ${delay}ms avant la prochaine tentative...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+      } catch (error) {
+        console.error(`❌ Tentative ${attempt}/${maxRetries} échouée:`, error);
+        
+        if (attempt === maxRetries) {
+          return { success: false, error: error.message };
+        }
+        
+        const delay = Math.pow(2, attempt) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
-    });
+    }
+  }
+
+  static async recordViewAsync(boutiqueSlug) {
+    // Enregistrement asynchrone avec délai pour éviter de bloquer l'UI
+    setTimeout(async () => {
+      try {
+        await this.recordViewWithRetry(boutiqueSlug, 2);
+      } catch (error) {
+        console.warn('⚠️ Échec silencieux de l\'enregistrement de vue:', error);
+      }
+    }, 100);
+  }
+
+  static async batchRecordViews(boutiquesSlugs) {
+    if (!Array.isArray(boutiquesSlugs) || boutiquesSlugs.length === 0) {
+      console.warn('⚠️ Aucun slug fourni pour l\'enregistrement batch');
+      return [];
+    }
+
+    console.log('📊 Enregistrement batch pour', boutiquesSlugs.length, 'boutiques');
+    
+    const promises = boutiquesSlugs.map(slug => 
+      this.recordView(slug).catch(error => ({ slug, error: error.message }))
+    );
+    
+    try {
+      const results = await Promise.allSettled(promises);
+      console.log('✅ Résultats batch enregistrement:', results);
+      return results;
+    } catch (error) {
+      console.error('❌ Erreur lors du batch d\'enregistrement:', error);
+      return [];
+    }
+  }
+
+  // Méthode de diagnostic
+  static async testStatsConnection() {
+    console.log('🔍 Test de connexion aux statistiques...');
+    
+    try {
+      if (!api.isAuthenticated()) {
+        return {
+          success: false,
+          message: 'Non authentifié',
+          details: 'Token manquant ou invalide'
+        };
+      }
+
+      // Test avec une boutique fictive
+      const testResponse = await api.get('/boutiques/stats', {
+        params: { period: 'today' },
+        includeAuth: true
+      });
+
+      return {
+        success: true,
+        message: 'Connexion aux statistiques OK',
+        details: testResponse
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        message: 'Échec de connexion aux statistiques',
+        details: error.message,
+        status: error.status
+      };
+    }
   }
 }
 

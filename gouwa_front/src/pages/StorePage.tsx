@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import ProduitService from '../services/produitService';
-
 import Button from '../components/common/Button';
 import { 
   ShoppingBag, 
@@ -39,6 +38,7 @@ const StorePage = () => {
   const [isProductDetailOpen, setIsProductDetailOpen] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [viewRecorded, setViewRecorded] = useState(false); // ✅ Nouveau state pour tracking
   
   // Écouter l'événement d'ajout d'élément en attente
   useEffect(() => {
@@ -56,7 +56,6 @@ const StorePage = () => {
   // Fonction pour vérifier l'authentification avant d'ajouter au panier
   const checkAuthAndAddToCart = async (product, quantity = 1, storeInfo) => {
     if (!isAuthenticated) {
-      // Sauvegarder l'intention d'ajout au panier dans sessionStorage
       sessionStorage.setItem('pendingCartItem', JSON.stringify({
         product,
         quantity,
@@ -64,12 +63,10 @@ const StorePage = () => {
         returnUrl: window.location.href
       }));
       
-      // Rediriger vers la page de connexion
       navigate('/auth/login');
       return;
     }
     
-    // Si authentifié, ajouter au panier normalement
     try {
       addToCart(product, quantity, storeInfo);
       console.log('Produit ajouté au panier:', product.name);
@@ -80,170 +77,254 @@ const StorePage = () => {
   
   // ✅ Fonction améliorée pour enregistrer une visite
   const recordStoreView = async (boutique) => {
-    try {
-      // Utiliser le service StatsService au lieu de fetch direct
-      const response = await StatsService.recordView(boutique.slug);
-      
-      if (response && response.success) {
-        console.log('Vue enregistrée avec succès');
-        setStore(prev => prev ? {
-          ...prev,
-          visitCount: prev.visitCount + 1
-        } : prev);
-      } else {
-        console.warn('Échec de l\'enregistrement de la vue:', response?.message || 'Erreur inconnue');
-      }
-    } catch (error) {
-      console.error('Erreur lors de l\'enregistrement de la vue:', error);
-      // ✅ Ne pas faire échouer l'application si l'enregistrement échoue
-    }
-  };
-  
-  // Version corrigée de la méthode fetchStore
-useEffect(() => {
-  const fetchStore = async () => {
-    if (!storeId) {
-      setError("Identifiant de boutique manquant");
-      setLoading(false);
+    // Éviter les enregistrements multiples
+    if (viewRecorded) {
+      console.log('Vue déjà enregistrée pour cette session');
       return;
     }
-    
-    setLoading(true);
-    setError(null);
-    
+
     try {
-      let storeData = null;
-      let lastError = null;
+      console.log('🔄 Tentative d\'enregistrement de vue pour:', boutique.slug || boutique.id);
       
-      // Essayer d'abord par slug
-      try {
-        console.log('Tentative de récupération par slug:', storeId);
-        const response = await BoutiqueService.getBoutiqueBySlug(storeId);
+      // Utiliser le slug de préférence, sinon l'ID
+      const identifier = boutique.slug || boutique.id;
+      
+      // Utiliser la méthode avec retry automatique
+      const response = await StatsService.recordViewWithRetry(identifier, 3);
+      
+      if (response && response.success) {
+        console.log('✅ Vue enregistrée avec succès:', response.message);
+        setViewRecorded(true); // Marquer comme enregistré
         
-        // Vérifier la structure de la réponse
-        if (response && response.data) {
-          storeData = response.data;
-          console.log('Boutique trouvée par slug:', storeData);
-        } else if (response && !response.data && response.id) {
-          // Cas où la réponse contient directement les données
-          storeData = response;
-          console.log('Boutique trouvée par slug (format direct):', storeData);
-        }
-      } catch (slugError) {
-        console.log('Échec récupération par slug:', slugError);
-        lastError = slugError;
+        // Optionnel: Incrémenter le compteur de visites localement
+        setStore(prev => prev ? {
+          ...prev,
+          visitCount: (prev.visitCount || 0) + 1
+        } : prev);
         
-        // Essayer par ID seulement si le storeId ressemble à un ID numérique
-        if (/^\d+$/.test(storeId)) {
-          try {
-            console.log('Tentative de récupération par ID:', storeId);
-            const response = await BoutiqueService.getBoutiqueById(storeId);
-            
-            if (response && response.data) {
-              storeData = response.data;
-              console.log('Boutique trouvée par ID:', storeData);
-            } else if (response && !response.data && response.id) {
-              storeData = response;
-              console.log('Boutique trouvée par ID (format direct):', storeData);
-            }
-          } catch (idError) {
-            console.log('Échec récupération par ID:', idError);
-            lastError = idError;
-          }
+        // Sauvegarder dans sessionStorage pour éviter les doubles enregistrements
+        sessionStorage.setItem(`view_recorded_${identifier}`, 'true');
+        
+      } else {
+        console.warn('⚠️ Échec de l\'enregistrement de la vue:', response?.error || 'Erreur inconnue');
+        
+        // Si c'est un problème de boutique non trouvée, ne pas retry
+        if (response?.status === 404) {
+          console.warn('Boutique non trouvée pour l\'enregistrement de vue');
+          return;
         }
       }
       
-      // Vérifier si on a trouvé des données valides
-      if (!storeData || !storeData.id || !storeData.nom) {
-        console.error('Données de boutique invalides:', storeData);
-        throw new Error('Boutique introuvable ou données invalides');
-      }
-      
-      // Vérifier si la boutique est active/publique
-      if (storeData.status && storeData.status !== 'active') {
-        throw new Error('Cette boutique n\'est pas disponible actuellement');
-      }
-      
-      // Adapter les données pour le format React
-      const adaptedStore = {
-        id: storeData.id,
-        name: storeData.nom || 'Boutique sans nom',
-        slug: storeData.slug || storeId,
-        slogan: storeData.slogan || "Bienvenue dans notre boutique",
-        description: storeData.description || "Description non disponible",
-        type: storeData.categorie || 'physical',
-        accentColor: storeData.couleur_accent || '#F25539',
-        logo: storeData.logo ? BoutiqueService.getLogoUrl(storeData.logo) : null,
-        visitCount: storeData.visit_count || Math.floor(Math.random() * 1000) + 100,
-        owner: storeData.user ? {
-          name: storeData.user.name,
-          email: storeData.user.email
-        } : null,
-        keywords: storeData.mots_cles || '',
-        createdAt: storeData.created_at,
-        updatedAt: storeData.updated_at
-      };
-      
-      console.log('Boutique adaptée:', adaptedStore);
-      setStore(adaptedStore);
-      
-      // Enregistrer la visite après avoir défini la boutique
-      await recordStoreView(adaptedStore);
-      
-      // Charger les produits
-      await fetchProducts(adaptedStore.id);
-      
-    } catch (err) {
-      console.error('Erreur lors de la récupération de la boutique:', err);
-      
-      // Messages d'erreur plus spécifiques
-      let errorMessage = 'Boutique non trouvée ou erreur de chargement';
-      
-      if (err.message) {
-        errorMessage = err.message;
-      } else if (err.response) {
-        if (err.response.status === 404) {
-          errorMessage = 'Boutique introuvable';
-        } else if (err.response.status === 403) {
-          errorMessage = 'Accès à cette boutique non autorisé';
-        } else if (err.response.status >= 500) {
-          errorMessage = 'Erreur serveur, veuillez réessayer plus tard';
-        } else {
-          errorMessage = `Erreur ${err.response.status}: ${err.response.data?.message || 'Erreur inconnue'}`;
-        }
-      }
-      
-      setError(errorMessage);
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      console.error('❌ Erreur lors de l\'enregistrement de la vue:', error);
+      // Ne pas faire échouer l'application pour cela
     }
   };
   
-  fetchStore();
-}, [storeId]);
+  // ✅ Hook pour enregistrer la vue quand la boutique est chargée
+  useEffect(() => {
+    const recordViewOnLoad = async () => {
+      if (!store || viewRecorded) return;
+
+      // Vérifier si la vue a déjà été enregistrée dans cette session
+      const identifier = store.slug || store.id;
+      const alreadyRecorded = sessionStorage.getItem(`view_recorded_${identifier}`);
+      
+      if (alreadyRecorded) {
+        console.log('Vue déjà enregistrée dans cette session');
+        setViewRecorded(true);
+        return;
+      }
+
+      // Attendre un peu pour être sûr que l'utilisateur ne fait pas que passer
+      const timer = setTimeout(async () => {
+        await recordStoreView(store);
+      }, 2000); // Enregistrer après 2 secondes
+
+      // Cleanup du timer
+      return () => clearTimeout(timer);
+    };
+
+    recordViewOnLoad();
+  }, [store, viewRecorded]);
+
+  // Version corrigée de la méthode fetchStore
+  useEffect(() => {
+    const fetchStore = async () => {
+      if (!storeId) {
+        setError("Identifiant de boutique manquant");
+        setLoading(false);
+        return;
+      }
+      
+      setLoading(true);
+      setError(null);
+      
+      try {
+        let storeData = null;
+        let lastError = null;
+        
+        // Essayer d'abord par slug
+        try {
+          console.log('🔍 Recherche boutique par slug:', storeId);
+          const response = await BoutiqueService.getBoutiqueBySlug(storeId);
+          
+          if (response && response.data) {
+            storeData = response.data;
+            console.log('✅ Boutique trouvée par slug:', storeData.nom);
+          } else if (response && !response.data && response.id) {
+            storeData = response;
+            console.log('✅ Boutique trouvée par slug (format direct):', storeData.nom);
+          }
+        } catch (slugError) {
+          console.log('⚠️ Échec récupération par slug:', slugError);
+          lastError = slugError;
+          
+          // Essayer par ID seulement si le storeId ressemble à un ID numérique
+          if (/^\d+$/.test(storeId)) {
+            try {
+              console.log('🔍 Recherche boutique par ID:', storeId);
+              const response = await BoutiqueService.getBoutiqueById(storeId);
+              
+              if (response && response.data) {
+                storeData = response.data;
+                console.log('✅ Boutique trouvée par ID:', storeData.nom);
+              } else if (response && !response.data && response.id) {
+                storeData = response;
+                console.log('✅ Boutique trouvée par ID (format direct):', storeData.nom);
+              }
+            } catch (idError) {
+              console.log('❌ Échec récupération par ID:', idError);
+              lastError = idError;
+            }
+          }
+        }
+        
+        // Vérifier si on a trouvé des données valides
+        if (!storeData || !storeData.id || !storeData.nom) {
+          console.error('❌ Données de boutique invalides:', storeData);
+          throw new Error('Boutique introuvable ou données invalides');
+        }
+        
+        // Vérifier si la boutique est active/publique
+        if (storeData.status && !['active', 'published', 'public'].includes(storeData.status)) {
+          throw new Error('Cette boutique n\'est pas disponible actuellement');
+        }
+        
+        // Adapter les données pour le format React
+        const adaptedStore = {
+          id: storeData.id,
+          name: storeData.nom || 'Boutique sans nom',
+          slug: storeData.slug || BoutiqueService.generateSlug(storeData.nom) || storeId,
+          slogan: storeData.slogan || "Bienvenue dans notre boutique",
+          description: storeData.description || "Découvrez nos produits de qualité",
+          type: storeData.categorie || storeData.category || 'physical',
+          accentColor: storeData.couleur_accent || storeData.accent_color || '#F25539',
+          logo: storeData.logo ? BoutiqueService.getLogoUrl(storeData.logo) : null,
+          visitCount: storeData.visit_count || storeData.total_views || Math.floor(Math.random() * 1000) + 100,
+          owner: storeData.user ? {
+            name: storeData.user.name,
+            email: storeData.user.email,
+            phone: storeData.user.phone
+          } : (storeData.owner || null),
+          keywords: storeData.mots_cles || storeData.keywords || '',
+          createdAt: storeData.created_at,
+          updatedAt: storeData.updated_at,
+          // Ajout de métadonnées pour l'enregistrement des vues
+          originalSlug: storeData.slug,
+          originalId: storeData.id
+        };
+        
+        console.log('✅ Boutique adaptée:', {
+          id: adaptedStore.id,
+          name: adaptedStore.name,
+          slug: adaptedStore.slug
+        });
+        
+        setStore(adaptedStore);
+        
+        // Charger les produits
+        await fetchProducts(adaptedStore.id);
+        
+      } catch (err) {
+        console.error('❌ Erreur lors de la récupération de la boutique:', err);
+        
+        let errorMessage = 'Boutique non trouvée ou erreur de chargement';
+        
+        if (err.message) {
+          errorMessage = err.message;
+        } else if (err.response) {
+          if (err.response.status === 404) {
+            errorMessage = 'Cette boutique n\'existe pas ou a été supprimée';
+          } else if (err.response.status === 403) {
+            errorMessage = 'Accès à cette boutique non autorisé';
+          } else if (err.response.status >= 500) {
+            errorMessage = 'Erreur serveur, veuillez réessayer plus tard';
+          } else {
+            errorMessage = `Erreur ${err.response.status}: ${err.response.data?.message || 'Erreur inconnue'}`;
+          }
+        }
+        
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchStore();
+  }, [storeId]);
 
   const fetchProducts = async (boutiqueId) => {
     try {
       setProductsLoading(true);
+      console.log('🔄 Chargement des produits pour boutique:', boutiqueId);
+      
       const response = await ProduitService.getAllProduits(boutiqueId);
       
-      if (response.success) {
+      if (response && response.success && response.data) {
         const convertedProducts = response.data
           .map(product => ProduitService.convertToReactFormat(product))
           .filter(product => product.isVisible);
         
+        console.log('✅ Produits chargés:', convertedProducts.length);
+        setProducts(convertedProducts);
+      } else if (response && Array.isArray(response)) {
+        // Cas où la réponse est directement un tableau
+        const convertedProducts = response
+          .map(product => ProduitService.convertToReactFormat(product))
+          .filter(product => product.isVisible);
+        
+        console.log('✅ Produits chargés (format direct):', convertedProducts.length);
         setProducts(convertedProducts);
       } else {
-        console.error('Erreur lors du chargement des produits:', response.message);
+        console.warn('⚠️ Format de réponse inattendu pour les produits:', response);
         setProducts([]);
       }
+      
     } catch (err) {
-      console.error('Erreur lors du chargement des produits:', err);
+      console.error('❌ Erreur lors du chargement des produits:', err);
       setProducts([]);
     } finally {
       setProductsLoading(false);
     }
   };
+
+  // ✅ Effect pour nettoyer le cache de session au déchargement de la page
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // Nettoyer les flags de vue enregistrée (optionnel)
+      if (store) {
+        const identifier = store.slug || store.id;
+        // Garder le flag pour éviter les doubles enregistrements si l'utilisateur revient
+        // sessionStorage.removeItem(`view_recorded_${identifier}`);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [store]);
 
   useEffect(() => {
     if (products.length > 0) {
@@ -290,17 +371,47 @@ useEffect(() => {
     }
   };
 
-  const handleShare = () => {
-    if (navigator.share && store) {
-      navigator.share({
-        title: store.name,
-        text: `Découvrez ${store.name} - ${store.slogan}`,
-        url: window.location.href,
-      }).catch(console.error);
-    } else {
-      navigator.clipboard.writeText(window.location.href).then(() => {
-        alert('Lien copié dans le presse-papiers !');
-      });
+  const handleShare = async () => {
+    if (!store) return;
+
+    const shareData = {
+      title: `${store.name} - Boutique en ligne`,
+      text: `Découvrez ${store.name} - ${store.slogan}`,
+      url: window.location.href,
+    };
+
+    try {
+      if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
+        await navigator.share(shareData);
+        console.log('✅ Partage réussi');
+      } else {
+        // Fallback: copier dans le presse-papiers
+        await navigator.clipboard.writeText(window.location.href);
+        
+        // Afficher une notification simple
+        const notification = document.createElement('div');
+        notification.textContent = 'Lien copié dans le presse-papiers !';
+        notification.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: #10B981;
+          color: white;
+          padding: 12px 16px;
+          border-radius: 8px;
+          font-size: 14px;
+          z-index: 10000;
+          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        `;
+        
+        document.body.appendChild(notification);
+        
+        setTimeout(() => {
+          document.body.removeChild(notification);
+        }, 3000);
+      }
+    } catch (error) {
+      console.error('Erreur lors du partage:', error);
     }
   };
 
@@ -348,15 +459,29 @@ useEffect(() => {
   if (error || !store) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
+        <div className="text-center max-w-md mx-auto px-4">
           <ShoppingBag size={48} className="text-gray-300 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-700 mb-2">Boutique introuvable</h2>
           <p className="text-gray-500 mb-6">
             {error || "Cette boutique n'existe pas ou a été supprimée."}
           </p>
-          <Button onClick={() => navigate('/')} variant="primary">
-            Retour à l'accueil
-          </Button>
+          <div className="space-y-3">
+            <Button 
+              onClick={() => navigate('/')} 
+              variant="primary"
+              className="w-full sm:w-auto"
+            >
+              Retour à l'accueil
+            </Button>
+            <br />
+            <Button 
+              onClick={() => window.location.reload()} 
+              variant="outline"
+              className="w-full sm:w-auto"
+            >
+              Réessayer
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -368,7 +493,7 @@ useEffect(() => {
       <div className="fixed top-4 right-4 z-30">
         <CartIcon 
           onClick={() => setIsCartOpen(true)}
-          className="bg-white shadow-lg"
+          className="bg-white shadow-lg hover:shadow-xl transition-shadow"
         />
       </div>
 
@@ -380,40 +505,52 @@ useEffect(() => {
 
       {/* En-tête de la boutique */}
       <div 
-        className="bg-gray-900 text-white py-10"
+        className="bg-gray-900 text-white py-12"
         style={{ backgroundColor: store.accentColor }}
       >
         <Container>
           <div className="flex flex-col md:flex-row items-center md:items-start gap-6">
-            <div className="w-24 h-24 rounded-full bg-white overflow-hidden flex items-center justify-center shadow-md">
+            <div className="w-24 h-24 rounded-full bg-white overflow-hidden flex items-center justify-center shadow-lg">
               {store.logo ? (
-                <img src={store.logo} alt={store.name} className="w-full h-full object-cover" />
-              ) : (
-                <ShoppingBag size={32} className="text-gray-300" />
-              )}
+                <img 
+                  src={store.logo} 
+                  alt={store.name} 
+                  className="w-full h-full object-cover"
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+              <div 
+                className="w-full h-full flex items-center justify-center"
+                style={{display: store.logo ? 'none' : 'flex'}}
+              >
+                <ShoppingBag size={32} className="text-gray-400" />
+              </div>
             </div>
             
-            <div className="text-center md:text-left">
-              <h1 className="text-3xl font-bold mb-2">{store.name}</h1>
-              <p className="text-white/80 mb-4">"{store.slogan}"</p>
+            <div className="text-center md:text-left flex-1">
+              <h1 className="text-3xl md:text-4xl font-bold mb-2">{store.name}</h1>
+              <p className="text-white/90 mb-4 text-lg italic">"{store.slogan}"</p>
               
               <div className="flex flex-wrap gap-2 justify-center md:justify-start">
-                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm">
-                  {store.type === 'physical' ? 'Produits Physiques' : 'Produits Digitaux'}
+                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium">
+                  {store.type === 'physical' ? '📦 Produits Physiques' : '💻 Produits Digitaux'}
                 </div>
-                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm">
-                  {products.length} produit{products.length !== 1 ? 's' : ''}
+                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium">
+                  📊 {products.length} produit{products.length !== 1 ? 's' : ''}
                 </div>
-                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm">
-                  {store.visitCount} visites
+                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium">
+                  👁️ {store.visitCount.toLocaleString()} visites
                 </div>
               </div>
             </div>
             
-            <div className="ml-auto hidden md:block">
+            <div className="flex flex-col sm:flex-row gap-3">
               <Button 
                 variant="outline" 
-                className="border-white text-white hover:bg-white/10"
+                className="border-white text-white hover:bg-white/10 transition-all"
                 icon={<Share2 size={16} />}
                 iconPosition="left"
                 onClick={handleShare}
@@ -426,18 +563,21 @@ useEffect(() => {
       </div>
       
       {/* Description de la boutique */}
-      <div className="bg-white border-b">
-        <Container className="py-6">
-          <div className="max-w-3xl">
-            <h2 className="text-xl font-semibold mb-3">À propos de cette boutique</h2>
-            <p className="text-gray-600">{store.description}</p>
+      <div className="bg-white border-b shadow-sm">
+        <Container className="py-8">
+          <div className="max-w-4xl">
+            <h2 className="text-2xl font-semibold mb-4 text-gray-900">À propos de cette boutique</h2>
+            <p className="text-gray-600 text-lg leading-relaxed mb-6">{store.description}</p>
             
-            {store.keywords && (
-              <div className="mt-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-2">Mots-clés</h3>
-                <div className="flex flex-wrap gap-1">
+            {store.keywords && store.keywords.trim() && (
+              <div className="mb-6">
+                <h3 className="text-sm font-semibold text-gray-900 mb-3">Spécialités</h3>
+                <div className="flex flex-wrap gap-2">
                   {store.keywords.split(',').map((keyword, index) => (
-                    <span key={index} className="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
+                    <span 
+                      key={index} 
+                      className="bg-gray-100 hover:bg-gray-200 text-gray-800 text-sm px-3 py-1 rounded-full transition-colors"
+                    >
                       {keyword.trim()}
                     </span>
                   ))}
@@ -445,22 +585,39 @@ useEffect(() => {
               </div>
             )}
             
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="flex items-center">
-                <Phone size={20} className="text-gray-400 mr-2" />
-                <span className="text-sm">
-                  {store.owner?.phone || '+225 07 XX XX XX XX'}
-                </span>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 border-t border-gray-100">
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-orange-100 rounded-full flex items-center justify-center">
+                  <Phone size={20} className="text-orange-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Téléphone</p>
+                  <p className="font-medium">
+                    {store.owner?.phone || '+225 07 XX XX XX XX'}
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center">
-                <Mail size={20} className="text-gray-400 mr-2" />
-                <span className="text-sm">
-                  {store.owner?.email || 'contact@boutikplace.com'}
-                </span>
+              
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                  <Mail size={20} className="text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Email</p>
+                  <p className="font-medium">
+                    {store.owner?.email || 'contact@boutikplace.com'}
+                  </p>
+                </div>
               </div>
-              <div className="flex items-center">
-                <MapPin size={20} className="text-gray-400 mr-2" />
-                <span className="text-sm">Abidjan, Côte d'Ivoire</span>
+              
+              <div className="flex items-center space-x-3">
+                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                  <MapPin size={20} className="text-green-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-gray-500">Localisation</p>
+                  <p className="font-medium">Abidjan, Côte d'Ivoire</p>
+                </div>
               </div>
             </div>
           </div>
@@ -468,11 +625,18 @@ useEffect(() => {
       </div>
       
       {/* Section Produits */}
-      <Container className="py-8">
-        <h2 className="text-2xl font-bold mb-6">Nos produits</h2>
+      <Container className="py-10">
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="text-3xl font-bold text-gray-900">Nos produits</h2>
+          {products.length > 0 && (
+            <div className="text-sm text-gray-500">
+              {products.length} produit{products.length !== 1 ? 's' : ''} disponible{products.length !== 1 ? 's' : ''}
+            </div>
+          )}
+        </div>
         
         {productsLoading ? (
-          <div className="text-center py-12 bg-white rounded-lg shadow-sm">
+          <div className="text-center py-16 bg-white rounded-xl shadow-sm">
             <Loader2 size={32} className="text-orange-500 mx-auto mb-4 animate-spin" />
             <p className="text-gray-500">Chargement des produits...</p>
           </div>
@@ -481,17 +645,17 @@ useEffect(() => {
             {products.map((product) => (
               <div 
                 key={product.id} 
-                className="bg-white rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow group"
+                className="bg-white rounded-xl overflow-hidden shadow-sm hover:shadow-lg transition-all duration-300 group cursor-pointer border border-gray-100"
               >
                 <div 
-                  className="h-48 bg-gray-200 relative cursor-pointer"
+                  className="h-52 bg-gray-100 relative overflow-hidden"
                   onClick={() => openProductDetail(product)}
                 >
                   {product.images && product.images.length > 0 && product.images[0] ? (
                     <img
                       src={getImageUrl(product.images[0])}
                       alt={product.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       onError={(e) => {
                         e.target.style.display = 'none';
                         e.target.nextSibling.style.display = 'flex';
@@ -499,15 +663,15 @@ useEffect(() => {
                     />
                   ) : null}
                   <div 
-                    className="absolute inset-0 bg-gray-200 flex items-center justify-center"
+                    className="absolute inset-0 bg-gray-100 flex items-center justify-center"
                     style={{display: product.images && product.images.length > 0 && product.images[0] ? 'none' : 'flex'}}
                   >
                     <Package size={32} className="text-gray-400" />
                   </div>
                   
                   {!product.isDigital && product.inStock <= 0 && (
-                    <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center">
-                      <span className="bg-red-500 text-white px-3 py-1 rounded-full text-sm font-medium">
+                    <div className="absolute inset-0 bg-black bg-opacity-60 flex items-center justify-center">
+                      <span className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-lg">
                         Rupture de stock
                       </span>
                     </div>
@@ -517,76 +681,77 @@ useEffect(() => {
                   <button 
                     onClick={(e) => handleQuickAddToCart(product, e)}
                     disabled={!product.isDigital && product.inStock <= 0}
-                    className="absolute top-2 right-2 w-8 h-8 rounded-full flex items-center justify-center bg-white shadow-md opacity-0 group-hover:opacity-100 transition-opacity duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="absolute top-3 right-3 w-10 h-10 rounded-full flex items-center justify-center bg-white shadow-lg opacity-0 group-hover:opacity-100 transition-all duration-200 hover:scale-110 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                     style={{ 
                       backgroundColor: (!product.isDigital && product.inStock <= 0) ? '#ef4444' : store.accentColor,
                       color: 'white'
                     }}
+                    title="Ajouter au panier"
                   >
-                    <ShoppingCart size={16} />
+                    <ShoppingCart size={18} />
                   </button>
                 </div>
                 
-                <div className="p-4">
+                <div className="p-5">
                   <h3 
-                    className="font-medium text-gray-900 mb-1 truncate cursor-pointer hover:text-orange-500"
+                    className="font-semibold text-gray-900 mb-2 truncate cursor-pointer hover:text-orange-500 transition-colors text-lg"
                     onClick={() => openProductDetail(product)}
+                    title={product.name}
                   >
                     {product.name}
                   </h3>
-                  <p className="text-sm text-gray-500 h-10 overflow-hidden">
-                    {product.description && product.description.length > 60 
-                      ? `${product.description.substring(0, 60)}...`
-                      : product.description}
+                  
+                  <p className="text-sm text-gray-600 h-12 overflow-hidden leading-relaxed mb-3">
+                    {product.description && product.description.length > 80 
+                      ? `${product.description.substring(0, 80)}...`
+                      : product.description || 'Aucune description disponible'}
                   </p>
                   
                   {product.category && (
-                    <div className="mt-2">
-                      <span className="bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded">
+                    <div className="mb-3">
+                      <span className="bg-gray-100 text-gray-700 text-xs px-2.5 py-1 rounded-full font-medium">
                         {product.category}
                       </span>
                     </div>
                   )}
                   
-                  <div className="mt-4 flex justify-between items-center">
-                    <span className="font-bold text-gray-900">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="font-bold text-gray-900 text-lg">
                       {parseFloat(product.price || 0).toLocaleString()} FCFA
                     </span>
                     
                     {!product.isDigital && product.inStock <= 5 && product.inStock > 0 && (
-                      <span className="text-xs text-amber-600 font-medium">
+                      <span className="text-xs text-amber-600 font-semibold bg-amber-50 px-2 py-1 rounded">
                         Plus que {product.inStock}
                       </span>
                     )}
                   </div>
 
-                  {/* Utilisation du composant AddToCartButton */}
-                  <div className="mt-3">
-                    <AddToCartButton
-                      product={product}
-                      storeInfo={{
-                        id: store.id,
-                        name: store.name,
-                        slug: store.slug,
-                        accentColor: store.accentColor
-                      }}
-                      quantity={1}
-                      fullWidth={true}
-                      size="sm"
-                      disabled={!product.isDigital && product.inStock <= 0}
-                    />
-                  </div>
+                  {/* Bouton d'ajout au panier principal */}
+                  <AddToCartButton
+                    product={product}
+                    storeInfo={{
+                      id: store.id,
+                      name: store.name,
+                      slug: store.slug,
+                      accentColor: store.accentColor
+                    }}
+                    quantity={1}
+                    fullWidth={true}
+                    size="sm"
+                    disabled={!product.isDigital && product.inStock <= 0}
+                  />
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="text-center py-12 bg-white rounded-lg shadow-sm">
-            <ShoppingBag size={48} className="text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-700 mb-2">Aucun produit disponible</h3>
-            <p className="text-gray-500">Cette boutique n'a pas encore ajouté de produits.</p>
+          <div className="text-center py-16 bg-white rounded-xl shadow-sm">
+            <ShoppingBag size={64} className="text-gray-300 mx-auto mb-6" />
+            <h3 className="text-xl font-semibold text-gray-700 mb-3">Aucun produit disponible</h3>
+            <p className="text-gray-500 mb-2">Cette boutique n'a pas encore ajouté de produits.</p>
             {store.owner && (
-              <p className="text-gray-400 text-sm mt-2">
+              <p className="text-gray-400 text-sm">
                 Revenez bientôt pour découvrir les nouveautés !
               </p>
             )}
@@ -597,16 +762,16 @@ useEffect(() => {
       {/* Modal de détail produit */}
       {isProductDetailOpen && selectedProduct && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black bg-opacity-75 flex items-center justify-center p-4">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-hidden shadow-xl">
-            <div className="flex flex-col md:flex-row h-full">
+          <div className="bg-white rounded-2xl max-w-5xl w-full max-h-[95vh] overflow-hidden shadow-2xl">
+            <div className="flex flex-col lg:flex-row h-full">
               {/* Images du produit */}
-              <div className="w-full md:w-1/2 bg-gray-100 relative">
-                <div className="h-64 md:h-full bg-white flex items-center justify-center relative">
+              <div className="w-full lg:w-1/2 bg-gray-50 relative">
+                <div className="h-64 lg:h-full bg-white flex items-center justify-center relative min-h-[400px]">
                   {selectedProduct.images && selectedProduct.images.length > 0 && selectedProduct.images[currentImageIndex] ? (
                     <img
                       src={getImageUrl(selectedProduct.images[currentImageIndex])}
                       alt={selectedProduct.name}
-                      className="max-w-full max-h-full object-contain"
+                      className="max-w-full max-h-full object-contain p-4"
                       onError={(e) => {
                         e.target.style.display = 'none';
                         e.target.nextSibling.style.display = 'flex';
@@ -627,10 +792,10 @@ useEffect(() => {
                           e.stopPropagation();
                           prevImage();
                         }} 
-                        className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-white rounded-full p-2 shadow-md text-gray-700 hover:bg-gray-200"
+                        className="absolute left-4 top-1/2 transform -translate-y-1/2 bg-white rounded-full p-3 shadow-lg text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50"
                         disabled={currentImageIndex === 0}
                       >
-                        <ChevronLeft size={20} />
+                        <ChevronLeft size={24} />
                       </button>
                       
                       <button 
@@ -638,13 +803,13 @@ useEffect(() => {
                           e.stopPropagation();
                           nextImage();
                         }} 
-                        className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-white rounded-full p-2 shadow-md text-gray-700 hover:bg-gray-200"
+                        className="absolute right-4 top-1/2 transform -translate-y-1/2 bg-white rounded-full p-3 shadow-lg text-gray-700 hover:bg-gray-50 transition-all disabled:opacity-50"
                         disabled={currentImageIndex === selectedProduct.images.length - 1}
                       >
-                        <ChevronRight size={20} />
+                        <ChevronRight size={24} />
                       </button>
                       
-                      <div className="absolute bottom-4 left-0 right-0 flex justify-center space-x-2">
+                      <div className="absolute bottom-6 left-0 right-0 flex justify-center space-x-2">
                         {selectedProduct.images.map((_, index) => (
                           <button
                             key={index}
@@ -652,8 +817,8 @@ useEffect(() => {
                               e.stopPropagation();
                               setCurrentImageIndex(index);
                             }}
-                            className={`w-2 h-2 rounded-full ${
-                              index === currentImageIndex ? 'bg-orange-500' : 'bg-gray-300'
+                            className={`w-3 h-3 rounded-full transition-all ${
+                              index === currentImageIndex ? 'bg-orange-500 scale-125' : 'bg-gray-300 hover:bg-gray-400'
                             }`}
                           />
                         ))}
@@ -664,41 +829,43 @@ useEffect(() => {
               </div>
               
               {/* Détails du produit */}
-              <div className="w-full md:w-1/2 p-6 overflow-y-auto flex flex-col max-h-[60vh] md:max-h-[90vh]">
+              <div className="w-full lg:w-1/2 p-8 overflow-y-auto flex flex-col max-h-[60vh] lg:max-h-[95vh]">
                 <button 
                   onClick={closeProductDetail}
-                  className="self-end text-gray-400 hover:text-gray-600"
+                  className="self-end text-gray-400 hover:text-gray-600 transition-colors p-2 -m-2"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
                 
-                <h2 className="text-2xl font-bold text-gray-900 mt-2">{selectedProduct.name}</h2>
-                <div className="text-xl font-bold mt-2" style={{ color: store.accentColor }}>
+                <h2 className="text-3xl font-bold text-gray-900 mt-2 mb-4">{selectedProduct.name}</h2>
+                <div className="text-2xl font-bold mb-4" style={{ color: store.accentColor }}>
                   {parseFloat(selectedProduct.price || 0).toLocaleString()} FCFA
                 </div>
                 
                 {selectedProduct.category && (
-                  <div className="mt-2">
-                    <span className="bg-gray-100 text-gray-800 text-xs font-medium px-2.5 py-0.5 rounded">
+                  <div className="mb-4">
+                    <span className="bg-gray-100 text-gray-800 text-sm font-medium px-3 py-1.5 rounded-full">
                       {selectedProduct.category}
                     </span>
                   </div>
                 )}
                 
-                <div className="mt-4">
-                  <h3 className="text-sm font-medium text-gray-900">Description</h3>
-                  <p className="mt-1 text-sm text-gray-600">{selectedProduct.description}</p>
+                <div className="mb-6">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-3">Description</h3>
+                  <p className="text-gray-600 leading-relaxed">{selectedProduct.description || 'Aucune description disponible.'}</p>
                 </div>
                 
                 {/* Détails spécifiques au produit */}
-                <div className="mt-4 space-y-3">
+                <div className="space-y-4 mb-6">
                   {!selectedProduct.isDigital && (
                     <>
-                      <div>
-                        <h3 className="text-sm font-medium text-gray-900">Disponibilité</h3>
-                        <p className="mt-1 text-sm text-gray-600">
+                      <div className="border-l-4 border-blue-500 pl-4">
+                        <h3 className="text-sm font-semibold text-gray-900">Disponibilité</h3>
+                        <p className={`mt-1 text-sm font-medium ${
+                          selectedProduct.inStock > 0 ? 'text-green-600' : 'text-red-600'
+                        }`}>
                           {selectedProduct.inStock > 0 
                             ? `${selectedProduct.inStock} en stock` 
                             : 'Rupture de stock'}
@@ -706,15 +873,15 @@ useEffect(() => {
                       </div>
                       
                       {selectedProduct.shippingFrom && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-900">Expédié depuis</h3>
+                        <div className="border-l-4 border-orange-500 pl-4">
+                          <h3 className="text-sm font-semibold text-gray-900">Expédié depuis</h3>
                           <p className="mt-1 text-sm text-gray-600">{selectedProduct.shippingFrom}</p>
                         </div>
                       )}
                       
                       {selectedProduct.deliveryTime && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-900">Délai de livraison estimé</h3>
+                        <div className="border-l-4 border-green-500 pl-4">
+                          <h3 className="text-sm font-semibold text-gray-900">Délai de livraison estimé</h3>
                           <p className="mt-1 text-sm text-gray-600">{selectedProduct.deliveryTime}</p>
                         </div>
                       )}
@@ -724,22 +891,22 @@ useEffect(() => {
                   {selectedProduct.isDigital && (
                     <>
                       {selectedProduct.digitalProductType && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-900">Type de produit</h3>
+                        <div className="border-l-4 border-purple-500 pl-4">
+                          <h3 className="text-sm font-semibold text-gray-900">Type de produit digital</h3>
                           <p className="mt-1 text-sm text-gray-600">{selectedProduct.digitalProductType}</p>
                         </div>
                       )}
                       
                       {selectedProduct.fileSize && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-900">Taille du fichier</h3>
+                        <div className="border-l-4 border-indigo-500 pl-4">
+                          <h3 className="text-sm font-semibold text-gray-900">Taille du fichier</h3>
                           <p className="mt-1 text-sm text-gray-600">{selectedProduct.fileSize}</p>
                         </div>
                       )}
                       
                       {selectedProduct.format && (
-                        <div>
-                          <h3 className="text-sm font-medium text-gray-900">Format</h3>
+                        <div className="border-l-4 border-pink-500 pl-4">
+                          <h3 className="text-sm font-semibold text-gray-900">Format</h3>
                           <p className="mt-1 text-sm text-gray-600">{selectedProduct.format}</p>
                         </div>
                       )}
@@ -747,11 +914,11 @@ useEffect(() => {
                   )}
                   
                   {selectedProduct.tags && formatTags(selectedProduct.tags).length > 0 && (
-                    <div>
-                      <h3 className="text-sm font-medium text-gray-900">Tags</h3>
-                      <div className="mt-1 flex flex-wrap gap-1">
+                    <div className="border-l-4 border-gray-500 pl-4">
+                      <h3 className="text-sm font-semibold text-gray-900 mb-2">Tags</h3>
+                      <div className="flex flex-wrap gap-2">
                         {formatTags(selectedProduct.tags).map((tag, index) => (
-                          <span key={index} className="bg-gray-100 text-gray-800 text-xs px-2 py-0.5 rounded">
+                          <span key={index} className="bg-gray-100 text-gray-700 text-xs px-2.5 py-1 rounded-full">
                             {tag}
                           </span>
                         ))}
@@ -760,10 +927,10 @@ useEffect(() => {
                   )}
                 </div>
                 
-                <div className="mt-6 flex-grow"></div>
+                <div className="flex-grow"></div>
                 
-                {/* Utilisation du composant AddToCartButton dans le modal */}
-                <div className="mt-4">
+                {/* Bouton d'ajout au panier dans le modal */}
+                <div className="mt-8">
                   <AddToCartButton
                     product={selectedProduct}
                     storeInfo={{
@@ -787,4 +954,4 @@ useEffect(() => {
   );
 };
 
-export default StorePage; 
+export default StorePage;

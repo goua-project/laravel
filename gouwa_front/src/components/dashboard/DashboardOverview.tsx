@@ -1,8 +1,10 @@
+
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../../contexts/StoreContext';
 import BoutiqueService from '../../services/BoutiqueService';
 import ProduitService from '../../services/produitService';
+import StatsService from '../../services/StatsService';
 import Button from '../common/Button';
 import { 
   ShoppingBag, 
@@ -30,15 +32,19 @@ const DashboardOverview = () => {
   const [productsLoading, setProductsLoading] = useState(false);
   const [subscriptionInfo, setSubscriptionInfo] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [viewsStats, setViewsStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
   
   // Fonction pour récupérer les informations d'abonnement
   const fetchSubscriptionInfo = async () => {
     try {
       setSubscriptionLoading(true);
-      // Appel à votre API pour récupérer les informations d'abonnement
+      const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
+      if (!token) return;
+
       const response = await fetch('/api/user/subscription', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -53,6 +59,50 @@ const DashboardOverview = () => {
       console.error('Erreur lors de la récupération des informations d\'abonnement:', error);
     } finally {
       setSubscriptionLoading(false);
+    }
+  };
+
+  // Fonction pour récupérer les statistiques de vues réelles
+  const fetchViewsStats = async (boutiqueId, period = 'month') => {
+    try {
+      setStatsLoading(true);
+      console.log('Récupération des statistiques de vues pour la boutique:', boutiqueId, 'période:', period);
+      
+      const response = await StatsService.getDashboardStats(boutiqueId, period);
+      
+      if (response.success && response.data) {
+        console.log('Statistiques de vues récupérées:', response.data);
+        setViewsStats(response.data);
+        
+        // Mettre à jour le store avec les nouvelles données de visite
+        if (currentStore) {
+          setCurrentStore(prev => ({
+            ...prev,
+            visitCount: response.data.total_views || 0,
+            previousVisits: response.data.previous_views || 0,
+            visitsGrowth: response.data.growth_rate || 0,
+            uniqueVisits: response.data.unique_views || 0
+          }));
+        }
+      } else {
+        console.warn('Aucune donnée de statistiques récupérée');
+        setViewsStats({
+          total_views: 0,
+          unique_views: 0,
+          previous_views: 0,
+          growth_rate: 0
+        });
+      }
+    } catch (error) {
+      console.error('Erreur lors de la récupération des statistiques de vues:', error);
+      setViewsStats({
+        total_views: 0,
+        unique_views: 0,
+        previous_views: 0,
+        growth_rate: 0
+      });
+    } finally {
+      setStatsLoading(false);
     }
   };
 
@@ -77,7 +127,6 @@ const DashboardOverview = () => {
       const response = await BoutiqueService.getMyBoutiques();
       
       if (response.success && response.data.length > 0) {
-        // Prendre la première boutique ou celle qui était déjà sélectionnée
         const boutique = response.data[0];
         
         // Transformer les données pour correspondre au format attendu
@@ -91,21 +140,28 @@ const DashboardOverview = () => {
           category: boutique.categorie,
           accentColor: boutique.couleur_accent,
           keywords: boutique.mots_cles,
-          visitCount: boutique.visit_count || 0,
+          visitCount: 0, // Sera mis à jour par les statistiques réelles
           orderCount: boutique.order_count || 0,
-          products: [], // Sera chargé séparément
+          products: [],
           createdAt: boutique.created_at,
           updatedAt: boutique.updated_at,
-          // Données simulées pour les statistiques (à remplacer par de vraies données)
+          // Données pour les statistiques
           salesAmount: boutique.sales_amount || 0,
           conversionRate: boutique.conversion_rate || 0,
-          // Nouveaux champs pour les statistiques
           totalProducts: boutique.total_products || 0,
           publishedProducts: boutique.published_products || 0,
           totalRevenue: boutique.total_revenue || 0,
           monthlyRevenue: boutique.monthly_revenue || 0,
           weeklyOrders: boutique.weekly_orders || 0,
-          monthlyOrders: boutique.monthly_orders || 0
+          monthlyOrders: boutique.monthly_orders || 0,
+          dailyRevenue: boutique.daily_revenue || 0,
+          weeklyRevenue: boutique.weekly_revenue || 0,
+          yearlyRevenue: boutique.yearly_revenue || 0,
+          dailyOrders: boutique.daily_orders || 0,
+          yearlyOrders: boutique.yearly_orders || 0,
+          revenueGrowth: boutique.revenue_growth || 0,
+          ordersGrowth: boutique.orders_growth || 0,
+          conversionGrowth: boutique.conversion_growth || 0
         };
         
         setCurrentStore(transformedBoutique);
@@ -113,11 +169,13 @@ const DashboardOverview = () => {
         // Charger les produits récents après avoir défini la boutique
         await fetchRecentProducts(transformedBoutique.id);
         
+        // Charger les statistiques de vues réelles
+        await fetchViewsStats(transformedBoutique.id, timeRange);
+        
         // Charger les informations d'abonnement
         await fetchSubscriptionInfo();
         
       } else if (response.success && response.data.length === 0) {
-        // Utilisateur n'a pas de boutique
         setCurrentStore(null);
       }
     } catch (err) {
@@ -136,7 +194,6 @@ const DashboardOverview = () => {
       const response = await ProduitService.getAllProduits(boutiqueId);
       
       if (response.success) {
-        // Convertir les données Laravel vers le format React et prendre les 5 plus récents
         const convertedProducts = response.data
           .map(product => ProduitService.convertToReactFormat(product))
           .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
@@ -164,7 +221,14 @@ const DashboardOverview = () => {
   // Charger les boutiques au montage du composant
   useEffect(() => {
     fetchUserBoutiques();
-  }, [setCurrentStore]);
+  }, []);
+
+  // Recharger les statistiques quand la période change
+  useEffect(() => {
+    if (currentStore && currentStore.id) {
+      fetchViewsStats(currentStore.id, timeRange);
+    }
+  }, [timeRange, currentStore?.id]);
 
   // Fonction pour actualiser les données
   const handleRefresh = () => {
@@ -175,6 +239,12 @@ const DashboardOverview = () => {
   // Calculer les statistiques basées sur les données réelles
   const calculateStats = () => {
     if (!currentStore) return [];
+
+    // Utiliser les vraies données de vues depuis viewsStats
+    const currentViews = viewsStats?.total_views || currentStore.visitCount || 0;
+    const previousViews = viewsStats?.previous_views || 0;
+    const visitsGrowth = viewsStats?.growth_rate || 0;
+    const uniqueViews = viewsStats?.unique_views || 0;
 
     // Calculer les revenus en fonction de la plage de temps
     const getRevenueForPeriod = () => {
@@ -208,28 +278,11 @@ const DashboardOverview = () => {
       }
     };
 
-    // Calculer les visites en fonction de la plage de temps
-    const getVisitsForPeriod = () => {
-      switch (timeRange) {
-        case 'today':
-          return currentStore.dailyVisits || 0;
-        case 'week':
-          return currentStore.weeklyVisits || 0;
-        case 'month':
-          return currentStore.monthlyVisits || currentStore.visitCount || 0;
-        case 'year':
-          return currentStore.yearlyVisits || currentStore.visitCount || 0;
-        default:
-          return currentStore.monthlyVisits || currentStore.visitCount || 0;
-      }
-    };
-
     const currentRevenue = getRevenueForPeriod();
     const currentOrders = getOrdersForPeriod();
-    const currentVisits = getVisitsForPeriod();
     
     // Calculer le taux de conversion (commandes / visites * 100)
-    const conversionRate = currentVisits > 0 ? ((currentOrders / currentVisits) * 100).toFixed(1) : 0;
+    const conversionRate = currentViews > 0 ? ((currentOrders / currentViews) * 100).toFixed(1) : 0;
 
     return [
       {
@@ -248,14 +301,25 @@ const DashboardOverview = () => {
       },
       {
         name: 'Visites',
-        value: currentVisits.toLocaleString(),
-        change: currentStore.visitsGrowth ? `${currentStore.visitsGrowth > 0 ? '+' : ''}${currentStore.visitsGrowth}%` : '+0%',
-        positive: !currentStore.visitsGrowth || currentStore.visitsGrowth >= 0,
+        value: statsLoading ? (
+          <div className="flex items-center">
+            <Loader2 size={16} className="animate-spin mr-1" />
+            <span className="text-sm">Chargement...</span>
+          </div>
+        ) : currentViews.toLocaleString(),
+        change: statsLoading ? '...' : `${visitsGrowth > 0 ? '+' : ''}${visitsGrowth}%`,
+        positive: !statsLoading && visitsGrowth >= 0,
         icon: <Users size={24} className="text-purple-500" />,
+        subtitle: statsLoading ? '' : `${uniqueViews} uniques`
       },
       {
         name: 'Taux de conversion',
-        value: `${conversionRate}%`,
+        value: statsLoading ? (
+          <div className="flex items-center">
+            <Loader2 size={16} className="animate-spin mr-1" />
+            <span className="text-sm">...</span>
+          </div>
+        ) : `${conversionRate}%`,
         change: currentStore.conversionGrowth ? `${currentStore.conversionGrowth > 0 ? '+' : ''}${currentStore.conversionGrowth}%` : '+0%',
         positive: !currentStore.conversionGrowth || currentStore.conversionGrowth >= 0,
         icon: <TrendingUp size={24} className="text-orange-500" />,
@@ -449,7 +513,8 @@ const DashboardOverview = () => {
               <button
                 key={range}
                 onClick={() => setTimeRange(range)}
-                className={`px-3 py-1 text-xs font-medium transition-colors ${
+                disabled={statsLoading}
+                className={`px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
                   timeRange === range
                     ? 'bg-orange-500 text-white'
                     : 'text-gray-700 hover:bg-gray-50'
@@ -473,6 +538,9 @@ const DashboardOverview = () => {
               </div>
               <div className="mt-2">
                 <p className="text-2xl font-semibold text-gray-900">{stat.value}</p>
+                {stat.subtitle && (
+                  <p className="text-xs text-gray-500 mt-1">{stat.subtitle}</p>
+                )}
                 <p className={`text-sm ${stat.positive ? 'text-green-600' : 'text-red-600'} flex items-center`}>
                   {stat.change}
                   <span className="text-xs ml-1">vs période précédente</span>
@@ -552,6 +620,7 @@ const DashboardOverview = () => {
           )}
         </div>
       </div>
+      
       
       {/* Quick Actions */}
       <div className="bg-white rounded-lg shadow-sm overflow-hidden">
@@ -654,8 +723,18 @@ const DashboardOverview = () => {
               <p className="text-xs text-gray-600">Produits</p>
             </div>
             <div>
-              <p className="text-2xl font-bold text-orange-600">{currentStore.visitCount}</p>
-              <p className="text-xs text-gray-600">Visites</p>
+              <div className="flex items-center justify-center">
+                <p className="text-2xl font-bold text-orange-600">
+                  {statsLoading ? (
+                    <Loader2 size={20} className="animate-spin" />
+                  ) : (
+                    (viewsStats?.total_views || currentStore.visitCount || 0).toLocaleString()
+                  )}
+                </p>
+              </div>
+              <p className="text-xs text-gray-600">
+                Visites {viewsStats?.unique_views ? `(${viewsStats.unique_views} uniques)` : ''}
+              </p>
             </div>
             <div>
               <p className="text-2xl font-bold text-orange-600">{currentStore.orderCount}</p>
