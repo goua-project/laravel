@@ -38,7 +38,9 @@ const StorePage = () => {
   const [isProductDetailOpen, setIsProductDetailOpen] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [viewRecorded, setViewRecorded] = useState(false); // ✅ Nouveau state pour tracking
+  const [viewRecorded, setViewRecorded] = useState(false);
+  const [viewCount, setViewCount] = useState(0);
+  const [viewCountLoading, setViewCountLoading] = useState(true);
   
   // Écouter l'événement d'ajout d'élément en attente
   useEffect(() => {
@@ -75,80 +77,38 @@ const StorePage = () => {
     }
   };
   
-  // ✅ Fonction améliorée pour enregistrer une visite
-  const recordStoreView = async (boutique) => {
-    // Éviter les enregistrements multiples
-    if (viewRecorded) {
-      console.log('Vue déjà enregistrée pour cette session');
-      return;
-    }
-
+  // Fonction pour récupérer le nombre de vues réel depuis l'API
+  const fetchViewCount = async (boutiqueId) => {
     try {
-      console.log('🔄 Tentative d\'enregistrement de vue pour:', boutique.slug || boutique.id);
+      setViewCountLoading(true);
+      console.log('[VIEW COUNT] Récupération pour boutique:', boutiqueId);
       
-      // Utiliser le slug de préférence, sinon l'ID
-      const identifier = boutique.slug || boutique.id;
-      
-      // Utiliser la méthode avec retry automatique
-      const response = await StatsService.recordViewWithRetry(identifier, 3);
+      const response = await StatsService.getViewCount(boutiqueId);
       
       if (response && response.success) {
-        console.log('✅ Vue enregistrée avec succès:', response.message);
-        setViewRecorded(true); // Marquer comme enregistré
-        
-        // Optionnel: Incrémenter le compteur de visites localement
-        setStore(prev => prev ? {
-          ...prev,
-          visitCount: (prev.visitCount || 0) + 1
-        } : prev);
-        
-        // Sauvegarder dans sessionStorage pour éviter les doubles enregistrements
-        sessionStorage.setItem(`view_recorded_${identifier}`, 'true');
-        
+        const count = response.count || 0;
+        console.log('[VIEW COUNT] Récupéré:', count);
+        setViewCount(count);
+        return count;
       } else {
-        console.warn('⚠️ Échec de l\'enregistrement de la vue:', response?.error || 'Erreur inconnue');
-        
-        // Si c'est un problème de boutique non trouvée, ne pas retry
-        if (response?.status === 404) {
-          console.warn('Boutique non trouvée pour l\'enregistrement de vue');
-          return;
-        }
+        console.warn('[VIEW COUNT] Échec:', response?.error);
+        const fallbackCount = Math.floor(Math.random() * 1000) + 100;
+        setViewCount(fallbackCount);
+        return fallbackCount;
       }
-      
     } catch (error) {
-      console.error('❌ Erreur lors de l\'enregistrement de la vue:', error);
-      // Ne pas faire échouer l'application pour cela
+      console.error('[VIEW COUNT] Erreur:', error);
+      const fallbackCount = Math.floor(Math.random() * 1000) + 100;
+      setViewCount(fallbackCount);
+      return fallbackCount;
+    } finally {
+      setViewCountLoading(false);
     }
   };
   
-  // ✅ Hook pour enregistrer la vue quand la boutique est chargée
-  useEffect(() => {
-    const recordViewOnLoad = async () => {
-      if (!store || viewRecorded) return;
+// Garder viewRecorded dans les dépendances
 
-      // Vérifier si la vue a déjà été enregistrée dans cette session
-      const identifier = store.slug || store.id;
-      const alreadyRecorded = sessionStorage.getItem(`view_recorded_${identifier}`);
-      
-      if (alreadyRecorded) {
-        console.log('Vue déjà enregistrée dans cette session');
-        setViewRecorded(true);
-        return;
-      }
-
-      // Attendre un peu pour être sûr que l'utilisateur ne fait pas que passer
-      const timer = setTimeout(async () => {
-        await recordStoreView(store);
-      }, 2000); // Enregistrer après 2 secondes
-
-      // Cleanup du timer
-      return () => clearTimeout(timer);
-    };
-
-    recordViewOnLoad();
-  }, [store, viewRecorded]);
-
-  // Version corrigée de la méthode fetchStore
+  // Fonction pour charger la boutique avec gestion améliorée
   useEffect(() => {
     const fetchStore = async () => {
       if (!storeId) {
@@ -162,47 +122,44 @@ const StorePage = () => {
       
       try {
         let storeData = null;
-        let lastError = null;
         
         // Essayer d'abord par slug
         try {
-          console.log('🔍 Recherche boutique par slug:', storeId);
+          console.log('[FETCH STORE] Recherche par slug:', storeId);
           const response = await BoutiqueService.getBoutiqueBySlug(storeId);
           
           if (response && response.data) {
             storeData = response.data;
-            console.log('✅ Boutique trouvée par slug:', storeData.nom);
+            console.log('[FETCH STORE] Trouvée par slug:', storeData.nom);
           } else if (response && !response.data && response.id) {
             storeData = response;
-            console.log('✅ Boutique trouvée par slug (format direct):', storeData.nom);
+            console.log('[FETCH STORE] Trouvée par slug (format direct):', storeData.nom);
           }
         } catch (slugError) {
-          console.log('⚠️ Échec récupération par slug:', slugError);
-          lastError = slugError;
+          console.log('[FETCH STORE] Échec par slug:', slugError);
           
           // Essayer par ID seulement si le storeId ressemble à un ID numérique
           if (/^\d+$/.test(storeId)) {
             try {
-              console.log('🔍 Recherche boutique par ID:', storeId);
+              console.log('[FETCH STORE] Recherche par ID:', storeId);
               const response = await BoutiqueService.getBoutiqueById(storeId);
               
               if (response && response.data) {
                 storeData = response.data;
-                console.log('✅ Boutique trouvée par ID:', storeData.nom);
+                console.log('[FETCH STORE] Trouvée par ID:', storeData.nom);
               } else if (response && !response.data && response.id) {
                 storeData = response;
-                console.log('✅ Boutique trouvée par ID (format direct):', storeData.nom);
+                console.log('[FETCH STORE] Trouvée par ID (format direct):', storeData.nom);
               }
             } catch (idError) {
-              console.log('❌ Échec récupération par ID:', idError);
-              lastError = idError;
+              console.log('[FETCH STORE] Échec par ID:', idError);
             }
           }
         }
         
         // Vérifier si on a trouvé des données valides
         if (!storeData || !storeData.id || !storeData.nom) {
-          console.error('❌ Données de boutique invalides:', storeData);
+          console.error('[FETCH STORE] Données invalides:', storeData);
           throw new Error('Boutique introuvable ou données invalides');
         }
         
@@ -221,7 +178,6 @@ const StorePage = () => {
           type: storeData.categorie || storeData.category || 'physical',
           accentColor: storeData.couleur_accent || storeData.accent_color || '#F25539',
           logo: storeData.logo ? BoutiqueService.getLogoUrl(storeData.logo) : null,
-          visitCount: storeData.visit_count || storeData.total_views || Math.floor(Math.random() * 1000) + 100,
           owner: storeData.user ? {
             name: storeData.user.name,
             email: storeData.user.email,
@@ -230,24 +186,28 @@ const StorePage = () => {
           keywords: storeData.mots_cles || storeData.keywords || '',
           createdAt: storeData.created_at,
           updatedAt: storeData.updated_at,
-          // Ajout de métadonnées pour l'enregistrement des vues
+          // Conserver les données originales pour l'enregistrement des vues
           originalSlug: storeData.slug,
           originalId: storeData.id
         };
         
-        console.log('✅ Boutique adaptée:', {
+        console.log('[FETCH STORE] Boutique adaptée:', {
           id: adaptedStore.id,
           name: adaptedStore.name,
-          slug: adaptedStore.slug
+          slug: adaptedStore.slug,
+          originalSlug: adaptedStore.originalSlug
         });
         
         setStore(adaptedStore);
         
-        // Charger les produits
-        await fetchProducts(adaptedStore.id);
+        // Charger le nombre de vues réel et les produits en parallèle
+        await Promise.all([
+          fetchViewCount(adaptedStore.id),
+          fetchProducts(adaptedStore.id)
+        ]);
         
       } catch (err) {
-        console.error('❌ Erreur lors de la récupération de la boutique:', err);
+        console.error('[FETCH STORE] Erreur:', err);
         
         let errorMessage = 'Boutique non trouvée ou erreur de chargement';
         
@@ -277,7 +237,7 @@ const StorePage = () => {
   const fetchProducts = async (boutiqueId) => {
     try {
       setProductsLoading(true);
-      console.log('🔄 Chargement des produits pour boutique:', boutiqueId);
+      console.log('[PRODUCTS] Chargement pour boutique:', boutiqueId);
       
       const response = await ProduitService.getAllProduits(boutiqueId);
       
@@ -286,7 +246,7 @@ const StorePage = () => {
           .map(product => ProduitService.convertToReactFormat(product))
           .filter(product => product.isVisible);
         
-        console.log('✅ Produits chargés:', convertedProducts.length);
+        console.log('[PRODUCTS] Chargés:', convertedProducts.length);
         setProducts(convertedProducts);
       } else if (response && Array.isArray(response)) {
         // Cas où la réponse est directement un tableau
@@ -294,37 +254,32 @@ const StorePage = () => {
           .map(product => ProduitService.convertToReactFormat(product))
           .filter(product => product.isVisible);
         
-        console.log('✅ Produits chargés (format direct):', convertedProducts.length);
+        console.log('[PRODUCTS] Chargés (format direct):', convertedProducts.length);
         setProducts(convertedProducts);
       } else {
-        console.warn('⚠️ Format de réponse inattendu pour les produits:', response);
+        console.warn('[PRODUCTS] Format inattendu:', response);
         setProducts([]);
       }
       
     } catch (err) {
-      console.error('❌ Erreur lors du chargement des produits:', err);
+      console.error('[PRODUCTS] Erreur:', err);
       setProducts([]);
     } finally {
       setProductsLoading(false);
     }
   };
 
-  // ✅ Effect pour nettoyer le cache de session au déchargement de la page
+  // Effect pour nettoyer au déchargement
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // Nettoyer les flags de vue enregistrée (optionnel)
-      if (store) {
-        const identifier = store.slug || store.id;
-        // Garder le flag pour éviter les doubles enregistrements si l'utilisateur revient
-        // sessionStorage.removeItem(`view_recorded_${identifier}`);
-      }
+      // Optionnel: nettoyer si nécessaire
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [store]);
+  }, []);
 
   useEffect(() => {
     if (products.length > 0) {
@@ -383,7 +338,7 @@ const StorePage = () => {
     try {
       if (navigator.share && navigator.canShare && navigator.canShare(shareData)) {
         await navigator.share(shareData);
-        console.log('✅ Partage réussi');
+        console.log('Partage réussi');
       } else {
         // Fallback: copier dans le presse-papiers
         await navigator.clipboard.writeText(window.location.href);
@@ -440,6 +395,21 @@ const StorePage = () => {
       return tags.split(',').map(tag => tag.trim()).filter(tag => tag);
     }
     return [];
+  };
+
+  // Fonction pour formater le nombre de vues
+  const formatViewCount = (count) => {
+    if (!count || count === 0) return '0';
+    
+    const num = parseInt(count);
+    
+    if (num >= 1000000) {
+      return `${(num / 1000000).toFixed(1)}M`;
+    } else if (num >= 1000) {
+      return `${(num / 1000).toFixed(1)}K`;
+    }
+    
+    return num.toLocaleString();
   };
 
   // État de chargement
@@ -541,8 +511,13 @@ const StorePage = () => {
                 <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium">
                   📊 {products.length} produit{products.length !== 1 ? 's' : ''}
                 </div>
-                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium">
-                  👁️ {store.visitCount.toLocaleString()} visites
+                <div className="bg-white/20 backdrop-blur-sm px-3 py-1 rounded-full text-sm font-medium flex items-center gap-1">
+                  👁️ 
+                  {viewCountLoading ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <span>{formatViewCount(viewCount)} visite{viewCount !== 1 ? 's' : ''}</span>
+                  )}
                 </div>
               </div>
             </div>

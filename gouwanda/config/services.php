@@ -35,4 +35,13 @@ return [
         ],
     ],
 
+    'kaliapay' => [
+    'api_key' => env('KALIAPAY_API_KEY'),
+    'service_id' => env('KALIAPAY_SERVICE_ID'),
+    'username' => env('KALIAPAY_USERNAME'),
+    'password' => env('KALIAPAY_PASSWORD'),
+],
+
+    
+
 ];

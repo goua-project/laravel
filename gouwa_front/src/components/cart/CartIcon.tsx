@@ -24,4 +24,3 @@ const CartIcon = ({ onClick, className = "" }) => {
 
 export default CartIcon;
 
-

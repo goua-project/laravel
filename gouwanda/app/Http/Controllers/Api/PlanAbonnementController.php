@@ -9,6 +9,7 @@ use App\Models\PlanAbonnement;
 use App\Models\Abonnement;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Carbon\Carbon;
 
 class PlanAbonnementController extends Controller
 {
@@ -39,6 +40,80 @@ class PlanAbonnementController extends Controller
     /**
      * Afficher un plan spécifique
      */
+
+    /**
+ * Obtenir l'abonnement actuel de l'utilisateur connecté
+ */
+/**
+ * Obtenir l'abonnement actuel de l'utilisateur connecté
+ */
+public function getCurrentSubscription()
+{
+    try {
+        $currentSubscription = Abonnement::with('plan')
+            ->where('user_id', Auth::id())
+            ->where('statut', 'actif')
+            ->first();
+
+        if (!$currentSubscription) {
+            return response()->json([
+                'success' => true,
+                'data' => null,
+                'message' => 'Aucun abonnement actif trouvé'
+            ], 200);
+        }
+
+        // Calculer les jours restants
+        $daysRemaining = null;
+        if ($currentSubscription->date_fin) {
+            try {
+                // S'assurer que date_fin est un objet Carbon
+                $dateFin = \Carbon\Carbon::parse($currentSubscription->date_fin);
+                $now = \Carbon\Carbon::now();
+                $daysRemaining = $now->diffInDays($dateFin, false);
+            } catch (\Exception $e) {
+                // En cas d'erreur de parsing, on ignore le calcul
+                $daysRemaining = null;
+            }
+        }
+
+        $subscriptionData = [
+            'id' => $currentSubscription->id,
+            'plan' => [
+                'id' => $currentSubscription->plan->id,
+                'nom' => $currentSubscription->plan->nom,
+                'slug' => $currentSubscription->plan->slug,
+                'prix' => $currentSubscription->plan->prix,
+                'description' => $currentSubscription->plan->description,
+                'features' => $currentSubscription->plan->features,
+                'limite_produits' => $currentSubscription->plan->limite_produits,
+                'commission' => $currentSubscription->plan->commission,
+                'is_free' => $currentSubscription->plan->is_free,
+            ],
+            'date_debut' => $currentSubscription->date_debut,
+            'date_fin' => $currentSubscription->date_fin,
+            'statut' => $currentSubscription->statut,
+            'is_active' => $currentSubscription->isActive(),
+            'reference_paiement' => $currentSubscription->reference_paiement,
+            'days_remaining' => $daysRemaining !== null && $daysRemaining > 0 ? $daysRemaining : 0,
+            'is_expired' => $daysRemaining !== null && $daysRemaining < 0,
+            'expires_soon' => $daysRemaining !== null && $daysRemaining >= 0 && $daysRemaining <= 7,
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $subscriptionData,
+            'message' => 'Abonnement actuel récupéré avec succès'
+        ], 200);
+
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Erreur lors de la récupération de l\'abonnement actuel',
+            'error' => $e->getMessage()
+        ], 500);
+    }
+}
     public function show($id)
     {
         try {

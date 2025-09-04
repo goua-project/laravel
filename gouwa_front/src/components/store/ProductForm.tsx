@@ -4,6 +4,7 @@ import Button from '../common/Button';
 import { ImagePlus, Trash2, Save, ArrowLeft, FileText, Video, Music, Book, Archive } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ProduitService from '../../services/produitService';
+import SubscriptionService from '../../services/SubscriptionService'; // Ajout du service d'abonnement
 import UpgradePlanModal from  '../../modals/UpgradePlanModal';
 
 interface ProductFormProps {
@@ -62,25 +63,54 @@ const ProductForm: React.FC<ProductFormProps> = ({ productId }) => {
 
   const checkProductLimits = async () => {
     try {
-      const limits = await ProduitService.checkProductLimit(currentStore.id);
+      // Vérifier d'abord l'abonnement actuel
+      const subscription = await SubscriptionService.getCurrentSubscription();
+      const currentPlan = subscription?.plan;
+      
+      let limit = 3; // Par défaut pour le plan gratuit
+      let planName = 'Gratuit';
+      
+      if (currentPlan) {
+        planName = currentPlan.nom;
+        // Si le plan n'est pas gratuit et a une limite null, c'est illimité
+        if (!currentPlan.is_free && currentPlan.limite_produits === null) {
+          limit = Infinity;
+        } else if (currentPlan.limite_produits) {
+          limit = currentPlan.limite_produits;
+        }
+      }
+      
+      // Récupérer le nombre actuel de produits
+      const currentCount = await ProduitService.getProductCount(currentStore.id);
+      
+      const canAddMore = currentCount < limit;
+      
       setProductLimits({
-        currentCount: limits.currentCount,
-        limit: limits.limit || 3,
-        canAddMore: limits.canAddMore,
-        planName: limits.planName || 'Gratuit'
+        currentCount,
+        limit,
+        canAddMore,
+        planName
       });
 
-      if (!limits.canAddMore && !productId) {
+      if (!canAddMore && !productId) {
         setUpgradeMessage(
-          `Vous avez atteint la limite de ${limits.limit} produits autorisés par votre abonnement ${limits.planName}. 
+          `Vous avez atteint la limite de ${limit} produits autorisés par votre abonnement ${planName}. 
           Veuillez mettre à niveau votre plan pour ajouter plus de produits.`
         );
         setShowUpgradeModal(true);
       }
     } catch (error) {
       console.error("Failed to check product limits:", error);
+      // En cas d'erreur, on utilise les valeurs par défaut
+      setProductLimits({
+        currentCount: 0,
+        limit: 3,
+        canAddMore: true,
+        planName: 'Gratuit'
+      });
     }
   };
+
 
   const loadProduct = async () => {
     if (!currentStore || !productId) return;
@@ -150,10 +180,17 @@ Les plans premium offrent :
     
     if (!currentStore) return;
     
-    // Check product limits before submitting for new products
-    if (!productId && !productLimits.canAddMore) {
-      handleProductLimitReached();
-      return;
+    // Vérifier à nouveau les limites avant de soumettre pour les nouveaux produits
+    if (!productId) {
+      try {
+        await checkProductLimits();
+        if (!productLimits.canAddMore) {
+          handleProductLimitReached();
+          return;
+        }
+      } catch (error) {
+        console.error("Failed to check product limits before submit:", error);
+      }
     }
 
     setIsLoading(true);
@@ -194,7 +231,7 @@ Les plans premium offrent :
       } else {
         response = await ProduitService.createProduit(currentStore.id, laravelData);
         
-        // Check if response indicates upgrade is required
+        // Vérifier si la réponse indique qu'une mise à niveau est nécessaire
         if (response.requiresUpgrade) {
           setUpgradeMessage(response.message);
           setShowUpgradeModal(true);
@@ -211,17 +248,17 @@ Les plans premium offrent :
     } catch (error: any) {
       console.error('Failed to save product:', error);
       
-      // Check if this is a product limit error
+      // Vérifier si c'est une erreur de limite de produits
       if (isProductLimitError(error)) {
         console.log('Product limit error detected, showing upgrade modal');
-        // Refresh product limits to get current state
+        // Actualiser les limites de produits pour obtenir l'état actuel
         await checkProductLimits();
         handleProductLimitReached();
       } else {
-        // For other errors, show the error message but filter out technical details
+        // Pour les autres erreurs, afficher le message d'erreur mais filtrer les détails techniques
         let errorMessage = error.message || 'Une erreur est survenue lors de la sauvegarde';
         
-        // Clean up technical SQL error messages
+        // Nettoyer les messages d'erreur SQL techniques
         if (errorMessage.includes('SQLSTATE') || errorMessage.includes('SQL:')) {
           errorMessage = 'Une erreur technique est survenue. Veuillez réessayer.';
         }
@@ -232,7 +269,6 @@ Les plans premium offrent :
       setIsLoading(false);
     }
   };
-  
   
   const handleAddImage = () => {
     setImages([...images, '']);

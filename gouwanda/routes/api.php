@@ -9,6 +9,11 @@ use App\Http\Controllers\Api\ProduitController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BoutiqueStatsController;
 use App\Http\Controllers\Api\PlanAbonnementController;
+use App\Http\Controllers\Api\AdminAuthController;
+use App\Http\Controllers\Api\Admin\AdminUserController;
+use App\Http\Controllers\Api\Admin\AdminBoutiqueController;
+use App\Http\Controllers\Api\KaliaPayController;
+use App\Http\Controllers\Api\CommandeController;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,6 +30,9 @@ use App\Http\Controllers\Api\PlanAbonnementController;
 Route::get('/test', function () {
     return response()->json(['message' => 'API fonctionne correctement']);
 });
+
+// Route publique pour obtenir le nombre de vues (sans authentification)
+Route::get('/boutiques/stats/{id}/public/view-count', [BoutiqueStatsController::class, 'getPublicViewCount']);
 
 // Routes d'authentification publiques
 Route::post('auth/register', [AuthController::class, 'register']);
@@ -74,6 +82,11 @@ Route::get('boutiques/{boutique}/product-limits', [ProduitController::class, 'ch
     Route::post('plans/compare', [PlanAbonnementController::class, 'compare']);
     Route::get('plans/{id}/calculate-price', [PlanAbonnementController::class, 'calculatePrice']);
     
+
+    Route::get('/user/subscription', [PlanAbonnementController::class, 'getUserSubscriptionHistory']);
+    
+    // Ou si vous voulez une route pour l'abonnement actuel uniquement :
+    Route::get('/user/subscription/current', [PlanAbonnementController::class, 'getCurrentSubscription']);
     // Routes pour l'historique et recommandations
     Route::get('my-subscription-history', [PlanAbonnementController::class, 'getUserSubscriptionHistory']);
     Route::get('plan-recommendations', [PlanAbonnementController::class, 'getRecommendations']);
@@ -109,40 +122,6 @@ Route::middleware('auth:sanctum')->group(function () {
 
 
 
-// Routes pour les statistiques de boutique - VERSION CORRIGÉE
-Route::prefix('boutiques/stats')->group(function () {
-    
-    // Routes publiques (pas d'authentification requise)
-    // IMPORTANT: Ces routes doivent être AVANT les routes avec paramètres dynamiques
-    Route::post('record-view/{slug}', [BoutiqueStatsController::class, 'recordViewBySlug'])
-        ->name('boutique.stats.record-view-slug');
-    
-    Route::post('record-view/id/{id}', [BoutiqueStatsController::class, 'recordViewById'])
-        ->name('boutique.stats.record-view-id')
-        ->where('id', '[0-9]+'); // Contraindre l'ID aux nombres uniquement
-    
-    // Routes protégées (authentification requise)
-    Route::middleware(['auth:sanctum'])->group(function () {
-        
-        // ROUTES SPÉCIFIQUES AVANT LES ROUTES GÉNÉRIQUES
-        
-        // Statistiques simplifiées pour le dashboard
-        Route::get('dashboard/{id}', [BoutiqueStatsController::class, 'getDashboardStats'])
-            ->name('boutique.stats.dashboard')
-            ->where('id', '[0-9]+');
-        
-        // Statistiques de toutes les boutiques de l'utilisateur
-        // ATTENTION: Cette route doit être AVANT la route {id}
-        Route::get('all', [BoutiqueStatsController::class, 'getAllBoutiquesStats'])
-            ->name('boutique.stats.all');
-        
-        // Statistiques complètes d'une boutique
-        // CETTE ROUTE DOIT ÊTRE EN DERNIER car elle capture tout ce qui n'a pas matché avant
-        Route::get('{id}', [BoutiqueStatsController::class, 'getBoutiqueStats'])
-            ->name('boutique.stats.show')
-            ->where('id', '[0-9]+');
-    });
-});
 
 // Alternative recommandée: Structure plus claire
 Route::prefix('boutiques')->group(function () {
@@ -175,3 +154,102 @@ Route::prefix('boutiques')->group(function () {
     });
 });
 
+Route::get('/boutiques/stats/{id}/view-count', [BoutiqueStatsController::class, 'getViewCount'])
+    ->middleware('auth:sanctum');
+
+    // Routes publiques pour les statistiques des boutiques (sans authentification)
+Route::get('/boutiques/stats/public/{id}/view-count', [BoutiqueStatsController::class, 'getPublicViewCount']);
+Route::get('/boutiques/stats/public/slug/{slug}/view-count', [BoutiqueStatsController::class, 'getPublicViewCountBySlug']);
+
+# Dans routes/api.php
+Route::post('boutiques/views/force-record/{slug}', [BoutiqueStatsController::class, 'recordViewBySlugForced']);
+Route::post('boutiques/views/extended-record/{slug}', [BoutiqueStatsController::class, 'recordViewBySlugExtended']);
+
+// Dans routes/api.php ou web.php
+Route::prefix('boutiques/views')->group(function () {
+    Route::post('record/{slug}', [BoutiqueStatsController::class, 'recordViewBySlug']);
+    Route::post('force-record/{slug}', [BoutiqueStatsController::class, 'recordViewBySlugForced']);
+    Route::post('extended-record/{slug}', [BoutiqueStatsController::class, 'recordViewBySlugExtended']);
+});
+
+Route::prefix('admin')->group(function () {
+    Route::post('/auth/login', [AdminAuthController::class, 'login']);
+    Route::post('/auth/logout', [AdminAuthController::class, 'logout'])->middleware('auth:sanctum');
+    Route::get('/auth/verify', [AdminAuthController::class, 'verify'])->middleware('auth:sanctum');
+});
+
+// Routes d'authentification administration
+Route::prefix('admin')->group(function () {
+    Route::post('/auth/login', [AdminAuthController::class, 'login']);
+    Route::post('/auth/logout', [AdminAuthController::class, 'logout'])->middleware('auth:sanctum');
+    Route::get('/auth/verify', [AdminAuthController::class, 'verify'])->middleware('auth:sanctum');
+});
+
+Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
+    // Routes de gestion des utilisateurs
+    Route::get('/users', [AdminUserController::class, 'index']);
+    Route::get('/users/{id}', [AdminUserController::class, 'show']);
+    Route::put('/users/{id}', [AdminUserController::class, 'update']);
+    Route::delete('/users/{id}', [AdminUserController::class, 'destroy']);
+    Route::delete('/users/{id}/force', [AdminUserController::class, 'forceDestroy']);
+    Route::patch('/users/{id}/toggle-status', [AdminUserController::class, 'toggleStatus']);
+});
+
+
+Route::prefix('admin')->group(function () {
+    Route::get('/boutiques', [AdminBoutiqueController::class, 'index']);
+    Route::get('/boutiques/{id}', [AdminBoutiqueController::class, 'show']);
+    Route::put('/boutiques/{id}', [AdminBoutiqueController::class, 'update']);
+    Route::patch('/boutiques/{id}/toggle-status', [AdminBoutiqueController::class, 'toggleStatus']);
+    Route::post('/boutiques/{id}/logo', [AdminBoutiqueController::class, 'updateLogo']);
+    Route::get('/boutiques/{id}/statistics', [AdminBoutiqueController::class, 'getStatistics']);
+    Route::get('/boutiques/{id}/subscriptions', [AdminBoutiqueController::class, 'getSubscriptions']);
+    Route::post('/boutiques/{id}/subscriptions', [AdminBoutiqueController::class, 'createSubscription']);
+    Route::put('/boutiques/{boutiqueId}/subscriptions/{abonnementId}', [AdminBoutiqueController::class, 'updateSubscription']);
+    Route::get('/boutiques/{id}/products', [AdminBoutiqueController::class, 'getProducts']);
+    Route::delete('/boutiques/{id}', [AdminBoutiqueController::class, 'destroy']);
+    Route::delete('/boutiques/{id}/force', [AdminBoutiqueController::class, 'forceDestroy']);
+});
+
+
+Route::middleware('auth:api')->group(function () {
+    // Paiements KaliaPay
+    Route::post('paiement/webpay/redirect', [KaliaPayController::class, 'initierWebPayRedirect']);
+    Route::post('paiement/webpay/url', [KaliaPayController::class, 'getPaymentUrl']);
+    Route::post('paiement/mobpay/qrcode', [KaliaPayController::class, 'genererQRCodeMobPay']);
+    Route::post('paiement/eshoppay/qrcode', [KaliaPayController::class, 'genererQRCodeEshopPay']);
+    Route::get('paiement/statut/{reference}', [KaliaPayController::class, 'verifierStatutTransaction']);
+});
+
+
+// Routes protégées par authentification
+Route::middleware(['auth:sanctum'])->group(function () {
+    
+    // CRUD des commandes
+    Route::prefix('commandes')->name('commandes.')->group(function () {
+        Route::get('/', [CommandeController::class, 'index'])->name('index');
+        Route::post('/', [CommandeController::class, 'store'])->name('store');
+        Route::get('/statistiques', [CommandeController::class, 'statistiques'])->name('statistiques');
+        Route::get('/{id}', [CommandeController::class, 'show'])->name('show');
+        Route::post('/{id}/annuler', [CommandeController::class, 'annuler'])->name('annuler');
+        
+        // Routes spécifiques KaliaPay
+        Route::get('/{id}/kalia-status', [CommandeController::class, 'verifierStatutPaiementKalia'])->name('kalia.status');
+        Route::post('/{id}/relancer-kalia', [CommandeController::class, 'relancerPaiementKalia'])->name('kalia.relancer');
+    });
+    
+    // Routes des paiements
+    Route::prefix('paiements')->name('paiements.')->group(function () {
+        Route::post('/{reference}/success', [CommandeController::class, 'callbackPaiementSuccess'])->name('success');
+        Route::post('/{reference}/echec', [CommandeController::class, 'callbackPaiementEchec'])->name('echec');
+    });
+});
+
+// Routes publiques pour les callbacks/webhooks (sans authentification)
+Route::prefix('webhooks')->name('webhooks.')->group(function () {
+    Route::post('/kaliapay', [CommandeController::class, 'webhookKaliaPay'])->name('kaliapay');
+    Route::post('/kaliapay/success', [CommandeController::class, 'callbackKaliaPaySuccess'])->name('kaliapay.success');
+});
+
+// Callback public (sans auth)
+Route::post('paiement/kaliapay/callback', [KaliaPayController::class, 'handleKaliaPayCallback']);

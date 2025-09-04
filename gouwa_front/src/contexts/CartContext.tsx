@@ -1,4 +1,3 @@
-// contexts/CartContext.js
 import React, { createContext, useContext, useReducer, useEffect } from 'react';
 
 // Actions du panier
@@ -15,6 +14,13 @@ const cartReducer = (state, action) => {
   switch (action.type) {
     case CART_ACTIONS.ADD_ITEM: {
       const { product, quantity = 1, storeInfo } = action.payload;
+      
+      // Vérification de sécurité
+      if (!product || !storeInfo) {
+        console.error('Produit ou storeInfo manquant dans ADD_ITEM');
+        return state;
+      }
+
       const existingItemIndex = state.items.findIndex(
         item => item.id === product.id && item.storeId === storeInfo.id
       );
@@ -49,10 +55,10 @@ const cartReducer = (state, action) => {
           id: product.id,
           name: product.name,
           price: parseFloat(product.price || 0),
-          image: product.images && product.images.length > 0 ? product.images[0] : null,
+          image: product.images && product.images.length > 0 ? product.images[0] : product.image || null,
           quantity,
-          isDigital: product.isDigital,
-          inStock: product.inStock,
+          isDigital: product.isDigital || false,
+          inStock: product.inStock || 0,
           storeId: storeInfo.id,
           storeName: storeInfo.name,
           storeSlug: storeInfo.slug,
@@ -68,10 +74,11 @@ const cartReducer = (state, action) => {
     }
 
     case CART_ACTIONS.REMOVE_ITEM: {
+      const { productId, storeId } = action.payload;
       return {
         ...state,
         items: state.items.filter(
-          item => !(item.id === action.payload.productId && item.storeId === action.payload.storeId)
+          item => !(item.id === productId && item.storeId === storeId)
         )
       };
     }
@@ -169,6 +176,11 @@ export const CartProvider = ({ children }) => {
 
   // Actions du panier
   const addToCart = (product, quantity = 1, storeInfo) => {
+    if (!product || !storeInfo) {
+      console.error('Produit ou storeInfo manquant dans addToCart');
+      return;
+    }
+    
     dispatch({
       type: CART_ACTIONS.ADD_ITEM,
       payload: { product, quantity, storeInfo }

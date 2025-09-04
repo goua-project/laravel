@@ -1,10 +1,10 @@
-
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../../contexts/StoreContext';
 import BoutiqueService from '../../services/BoutiqueService';
 import ProduitService from '../../services/produitService';
 import StatsService from '../../services/StatsService';
+import SubscriptionService from '../../services/SubscriptionService';
 import Button from '../common/Button';
 import { 
   ShoppingBag, 
@@ -19,7 +19,8 @@ import {
   AlertCircle,
   Crown,
   Calendar,
-  Clock
+  Clock,
+  RefreshCw
 } from 'lucide-react';
 
 const DashboardOverview = () => {
@@ -32,77 +33,106 @@ const DashboardOverview = () => {
   const [productsLoading, setProductsLoading] = useState(false);
   const [subscriptionInfo, setSubscriptionInfo] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
-  const [viewsStats, setViewsStats] = useState(null);
-  const [statsLoading, setStatsLoading] = useState(false);
   
-  // Fonction pour récupérer les informations d'abonnement
-  const fetchSubscriptionInfo = async () => {
-    try {
-      setSubscriptionLoading(true);
-      const token = localStorage.getItem('auth_token') || localStorage.getItem('token');
-      if (!token) return;
-
-      const response = await fetch('/api/user/subscription', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success && data.data) {
-          setSubscriptionInfo(data.data);
-        }
-      }
-    } catch (error) {
-      console.error('Erreur lors de la récupération des informations d\'abonnement:', error);
-    } finally {
-      setSubscriptionLoading(false);
+  // États pour les statistiques de vues
+  const [viewsStats, setViewsStats] = useState({
+    total_views: 0,
+    unique_views: 0,
+    previous_views: 0,
+    growth_rate: 0
+  });
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState(null);
+  
+  
+// Remplacez la fonction fetchSubscriptionInfo par :
+const fetchSubscriptionInfo = async () => {
+  try {
+    setSubscriptionLoading(true);
+    const response = await SubscriptionService.getCurrentSubscription();
+    
+    if (response.success && response.data) {
+      setSubscriptionInfo(response.data);
     }
-  };
+  } catch (error) {
+    console.error('Erreur lors de la récupération des informations d\'abonnement:', error);
+  } finally {
+    setSubscriptionLoading(false);
+  }
+};
 
-  // Fonction pour récupérer les statistiques de vues réelles
-  const fetchViewsStats = async (boutiqueId, period = 'month') => {
+  // Fonction pour récupérer les statistiques de vues avec gestion d'erreur améliorée
+  const fetchViewsStats = async (boutiqueId, period = 'month', isRefresh = false) => {
+    if (!boutiqueId || boutiqueId <= 0) {
+      console.warn('ID de boutique invalide pour les statistiques:', boutiqueId);
+      return;
+    }
+
     try {
-      setStatsLoading(true);
+      if (!isRefresh) {
+        setStatsLoading(true);
+      }
+      setStatsError(null);
+      
       console.log('Récupération des statistiques de vues pour la boutique:', boutiqueId, 'période:', period);
       
+      // Utiliser le service de statistiques
       const response = await StatsService.getDashboardStats(boutiqueId, period);
       
+      console.log('Réponse des statistiques:', response);
+      
       if (response.success && response.data) {
-        console.log('Statistiques de vues récupérées:', response.data);
-        setViewsStats(response.data);
+        const statsData = {
+          total_views: parseInt(response.data.total_views) || 0,
+          unique_views: parseInt(response.data.unique_views) || 0,
+          previous_views: parseInt(response.data.previous_views) || 0,
+          growth_rate: parseFloat(response.data.growth_rate) || 0
+        };
         
-        // Mettre à jour le store avec les nouvelles données de visite
+        console.log('Statistiques formatées:', statsData);
+        setViewsStats(statsData);
+        
+        // Mettre à jour le store avec les nouvelles données
         if (currentStore) {
           setCurrentStore(prev => ({
             ...prev,
-            visitCount: response.data.total_views || 0,
-            previousVisits: response.data.previous_views || 0,
-            visitsGrowth: response.data.growth_rate || 0,
-            uniqueVisits: response.data.unique_views || 0
+            visitCount: statsData.total_views,
+            previousVisits: statsData.previous_views,
+            visitsGrowth: statsData.growth_rate,
+            uniqueVisits: statsData.unique_views
           }));
         }
+      } else if (response.requireAuth) {
+        // Problème d'authentification
+        setStatsError('Session expirée, veuillez vous reconnecter');
+        console.warn('Problème d\'authentification pour les statistiques');
       } else {
-        console.warn('Aucune donnée de statistiques récupérée');
-        setViewsStats({
+        // Aucune donnée disponible, utiliser des valeurs par défaut
+        console.warn('Aucune donnée de statistiques récupérée, utilisation des valeurs par défaut');
+        const defaultStats = {
           total_views: 0,
           unique_views: 0,
           previous_views: 0,
           growth_rate: 0
-        });
+        };
+        setViewsStats(defaultStats);
       }
     } catch (error) {
       console.error('Erreur lors de la récupération des statistiques de vues:', error);
-      setViewsStats({
+      setStatsError(error.message || 'Erreur lors du chargement des statistiques');
+      
+      // En cas d'erreur, utiliser des valeurs par défaut
+      const defaultStats = {
         total_views: 0,
         unique_views: 0,
         previous_views: 0,
         growth_rate: 0
-      });
+      };
+      setViewsStats(defaultStats);
     } finally {
-      setStatsLoading(false);
+      if (!isRefresh) {
+        setStatsLoading(false);
+      }
     }
   };
 
@@ -231,9 +261,25 @@ const DashboardOverview = () => {
   }, [timeRange, currentStore?.id]);
 
   // Fonction pour actualiser les données
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setRefreshing(true);
-    fetchUserBoutiques(false);
+    
+    // Actualiser les données de la boutique
+    await fetchUserBoutiques(false);
+    
+    // Actualiser spécifiquement les statistiques de vues
+    if (currentStore && currentStore.id) {
+      await fetchViewsStats(currentStore.id, timeRange, true);
+    }
+    
+    setRefreshing(false);
+  };
+
+  // Fonction pour actualiser uniquement les statistiques
+  const handleStatsRefresh = async () => {
+    if (currentStore && currentStore.id) {
+      await fetchViewsStats(currentStore.id, timeRange, true);
+    }
   };
 
   // Calculer les statistiques basées sur les données réelles
@@ -241,10 +287,9 @@ const DashboardOverview = () => {
     if (!currentStore) return [];
 
     // Utiliser les vraies données de vues depuis viewsStats
-    const currentViews = viewsStats?.total_views || currentStore.visitCount || 0;
-    const previousViews = viewsStats?.previous_views || 0;
-    const visitsGrowth = viewsStats?.growth_rate || 0;
-    const uniqueViews = viewsStats?.unique_views || 0;
+    const currentViews = viewsStats.total_views;
+    const uniqueViews = viewsStats.unique_views;
+    const visitsGrowth = viewsStats.growth_rate;
 
     // Calculer les revenus en fonction de la plage de temps
     const getRevenueForPeriod = () => {
@@ -306,11 +351,25 @@ const DashboardOverview = () => {
             <Loader2 size={16} className="animate-spin mr-1" />
             <span className="text-sm">Chargement...</span>
           </div>
-        ) : currentViews.toLocaleString(),
+        ) : (
+          <div className="flex items-center">
+            <span>{currentViews.toLocaleString()}</span>
+            {statsError && (
+              <button 
+                onClick={handleStatsRefresh}
+                className="ml-2 text-red-500 hover:text-red-600"
+                title="Réessayer"
+              >
+                <RefreshCw size={14} />
+              </button>
+            )}
+          </div>
+        ),
         change: statsLoading ? '...' : `${visitsGrowth > 0 ? '+' : ''}${visitsGrowth}%`,
         positive: !statsLoading && visitsGrowth >= 0,
         icon: <Users size={24} className="text-purple-500" />,
-        subtitle: statsLoading ? '' : `${uniqueViews} uniques`
+        subtitle: statsLoading ? '' : `${uniqueViews} uniques`,
+        error: statsError
       },
       {
         name: 'Taux de conversion',
@@ -471,7 +530,7 @@ const DashboardOverview = () => {
                 className="text-white hover:bg-white/10 p-2 rounded-md transition-colors disabled:opacity-50"
                 title="Actualiser"
               >
-                <Loader2 size={16} className={refreshing ? 'animate-spin' : ''} />
+                <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
               </button>
               <Link to={`/store/${currentStore.slug}`} target="_blank">
                 <Button variant="outline" className="text-white border-white hover:bg-white/10" icon={<ExternalLink size={16} />} iconPosition="right">
@@ -500,6 +559,30 @@ const DashboardOverview = () => {
                     Renouveler
                   </Button>
                 </Link>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Alerte d'erreur pour les statistiques */}
+        {statsError && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <AlertCircle className="h-5 w-5 text-yellow-400" />
+              </div>
+              <div className="ml-3 flex-1">
+                <p className="text-sm text-yellow-700">
+                  <span className="font-medium">Problème de statistiques :</span> {statsError}
+                </p>
+              </div>
+              <div className="ml-4 flex-shrink-0">
+                <button 
+                  onClick={handleStatsRefresh}
+                  className="text-yellow-600 hover:text-yellow-800 text-sm font-medium"
+                >
+                  Réessayer
+                </button>
               </div>
             </div>
           </div>
@@ -540,6 +623,9 @@ const DashboardOverview = () => {
                 <p className="text-2xl font-semibold text-gray-900">{stat.value}</p>
                 {stat.subtitle && (
                   <p className="text-xs text-gray-500 mt-1">{stat.subtitle}</p>
+                )}
+                {stat.error && (
+                  <p className="text-xs text-red-500 mt-1">Erreur de chargement</p>
                 )}
                 <p className={`text-sm ${stat.positive ? 'text-green-600' : 'text-red-600'} flex items-center`}>
                   {stat.change}
@@ -728,12 +814,21 @@ const DashboardOverview = () => {
                   {statsLoading ? (
                     <Loader2 size={20} className="animate-spin" />
                   ) : (
-                    (viewsStats?.total_views || currentStore.visitCount || 0).toLocaleString()
+                    viewsStats.total_views.toLocaleString()
                   )}
                 </p>
+                {statsError && (
+                  <button 
+                    onClick={handleStatsRefresh}
+                    className="ml-1 text-red-500 hover:text-red-600"
+                    title="Erreur de chargement - Cliquer pour réessayer"
+                  >
+                    <AlertCircle size={16} />
+                  </button>
+                )}
               </div>
               <p className="text-xs text-gray-600">
-                Visites {viewsStats?.unique_views ? `(${viewsStats.unique_views} uniques)` : ''}
+                Visites {viewsStats.unique_views > 0 ? `(${viewsStats.unique_views} uniques)` : ''}
               </p>
             </div>
             <div>

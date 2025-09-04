@@ -18,10 +18,11 @@ const AddToCartButton = ({
   ...props 
 }) => {
   const { addToCart, isInCart, getCartItemQuantity } = useCart();
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, user } = useAuth();
   const navigate = useNavigate();
   const [isAdding, setIsAdding] = useState(false);
   const [justAdded, setJustAdded] = useState(false);
+  const [error, setError] = useState(null);
 
   const isInCartAlready = isInCart(product.id, storeInfo.id);
   const currentQuantity = getCartItemQuantity(product.id, storeInfo.id);
@@ -31,33 +32,69 @@ const AddToCartButton = ({
     (currentQuantity + quantity) > product.inStock;
 
   const handleAddToCart = async () => {
-    // Vérifier l'authentification en premier
+    // Vérifier l'authentification
     if (!isAuthenticated) {
       // Sauvegarder l'intention d'ajout au panier
-      sessionStorage.setItem('pendingCartItem', JSON.stringify({
+      const pendingItem = {
         product,
         quantity,
         storeInfo,
-        returnUrl: window.location.href
-      }));
+        returnUrl: window.location.href,
+        timestamp: Date.now()
+      };
       
-      // Rediriger vers la page de connexion
-      navigate('/auth/login');
+      try {
+        localStorage.setItem('pendingCartItem', JSON.stringify(pendingItem));
+      } catch (e) {
+        // Fallback si localStorage n'est pas disponible
+        console.warn('localStorage not available, using sessionStorage');
+        sessionStorage.setItem('pendingCartItem', JSON.stringify(pendingItem));
+      }
+      
+      navigate('/auth/login?redirect=' + encodeURIComponent(window.location.pathname));
       return;
     }
 
     if (isOutOfStock || willExceedStock || disabled || authLoading) return;
 
     setIsAdding(true);
+    setError(null);
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 300)); // Animation delay
+      // CORRECTION : Vérification simplifiée de la disponibilité
+      // Utilisation des données locales au lieu d'un appel API potentiellement défaillant
+      if (!product.isDigital) {
+        const totalRequestedQuantity = currentQuantity + quantity;
+        if (totalRequestedQuantity > product.inStock) {
+          setError(`Stock insuffisant. Disponible: ${product.inStock}, dans le panier: ${currentQuantity}`);
+          return;
+        }
+      }
+
+      // Appeler addToCart avec les bons paramètres
       addToCart(product, quantity, storeInfo);
       
       setJustAdded(true);
-      setTimeout(() => setJustAdded(false), 2000);
+      setTimeout(() => setJustAdded(false), 3000);
+      
+      // Analytics/tracking
+      if (window.gtag) {
+        window.gtag('event', 'add_to_cart', {
+          currency: 'XOF',
+          value: product.price * quantity,
+          items: [{
+            item_id: product.id,
+            item_name: product.name,
+            category: product.category,
+            quantity: quantity,
+            price: product.price
+          }]
+        });
+      }
+      
     } catch (error) {
       console.error('Erreur lors de l\'ajout au panier:', error);
+      setError(error.message || 'Erreur lors de l\'ajout au panier');
     } finally {
       setIsAdding(false);
     }
@@ -123,21 +160,13 @@ const AddToCartButton = ({
   const isButtonDisabled = disabled || isAdding || authLoading || 
     (isAuthenticated && (isOutOfStock || willExceedStock));
 
-  // Déterminer la variante du bouton en fonction de l'état
   const getButtonVariant = () => {
-    if (!isAuthenticated) {
-      return "outline";
-    }
-    if (justAdded) {
-      return "success";
-    }
-    if (isOutOfStock || willExceedStock) {
-      return "outline";
-    }
+    if (!isAuthenticated) return "outline";
+    if (justAdded) return "success";
+    if (isOutOfStock || willExceedStock) return "outline";
     return variant;
   };
 
-  // Déterminer le style du bouton
   const getButtonStyle = () => {
     if (!isAuthenticated) {
       return {
@@ -147,7 +176,7 @@ const AddToCartButton = ({
     }
     
     if (justAdded || isOutOfStock || willExceedStock) {
-      return undefined; // Utiliser les styles par défaut
+      return undefined;
     }
     
     if (storeInfo.accentColor) {
@@ -158,26 +187,34 @@ const AddToCartButton = ({
   };
 
   return (
-    <Button
-      variant={getButtonVariant()}
-      size={size}
-      fullWidth={fullWidth}
-      disabled={isButtonDisabled}
-      onClick={handleAddToCart}
-      icon={buttonContent.icon}
-      iconPosition="left"
-      className={`transition-all duration-200 ${
-        justAdded ? 'bg-green-500 hover:bg-green-600 border-green-500' : ''
-      } ${
-        isOutOfStock || willExceedStock ? 'text-red-600 border-red-200 hover:bg-red-50' : ''
-      } ${
-        !isAuthenticated ? 'hover:bg-opacity-10' : ''
-      } ${className}`}
-      style={getButtonStyle()}
-      {...props}
-    >
-      {buttonContent.text}
-    </Button>
+    <div className="relative">
+      <Button
+        variant={getButtonVariant()}
+        size={size}
+        fullWidth={fullWidth}
+        disabled={isButtonDisabled}
+        onClick={handleAddToCart}
+        icon={buttonContent.icon}
+        iconPosition="left"
+        className={`transition-all duration-200 ${
+          justAdded ? 'bg-green-500 hover:bg-green-600 border-green-500' : ''
+        } ${
+          isOutOfStock || willExceedStock ? 'text-red-600 border-red-200 hover:bg-red-50' : ''
+        } ${
+          !isAuthenticated ? 'hover:bg-opacity-10' : ''
+        } ${className}`}
+        style={getButtonStyle()}
+        {...props}
+      >
+        {buttonContent.text}
+      </Button>
+      
+      {error && (
+        <div className="absolute top-full left-0 right-0 mt-1 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-600">
+          {error}
+        </div>
+      )}
+    </div>
   );
 };
 

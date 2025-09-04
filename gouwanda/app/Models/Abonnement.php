@@ -21,12 +21,14 @@ class Abonnement extends Model
         'reference_paiement'
     ];
 
-    protected $dates = [
-        'date_debut',
-        'date_fin',
-        'created_at',
-        'updated_at'
-    ];
+   
+    // Dans votre modèle App\Models\Abonnement
+protected $casts = [
+    'date_debut' => 'datetime',
+    'date_fin' => 'datetime',
+    'created_at' => 'datetime',
+    'updated_at' => 'datetime',
+];
 
     public function user()
     {

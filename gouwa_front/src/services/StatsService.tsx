@@ -3,76 +3,51 @@ import api from './apiService';
 class StatsService {
   
   /**
-   * Récupérer les statistiques du dashboard avec gestion d'erreur améliorée
+   * Récupérer les statistiques du dashboard (PUBLIQUE - sans authentification)
    */
   static async getDashboardStats(boutiqueId, period = 'month') {
     try {
-      console.log(`📊 Récupération des stats dashboard pour boutique ${boutiqueId}, période: ${period}`);
+      console.log(`Début getDashboardStats - Boutique: ${boutiqueId}`);
       
       if (!api || typeof api.get !== 'function') {
-        console.warn('API service non disponible pour les statistiques dashboard');
+        console.error('API service non disponible');
         return this.getEmptyDashboardStats();
       }
 
-      // Vérifier l'authentification avant la requête
-      if (!api.isAuthenticated()) {
-        console.warn('🚨 Utilisateur non authentifié pour les statistiques');
+      if (!boutiqueId || boutiqueId <= 0) {
+        console.error('ID de boutique invalide');
         return {
           success: false,
-          error: 'Authentification requise',
+          error: 'ID de boutique invalide',
           data: this.getEmptyDashboardStats().data
         };
       }
 
       const response = await api.get(`/boutiques/stats/${boutiqueId}/dashboard`, {
         params: { period },
-        includeAuth: true
+        includeAuth: false,
+        skipAuthToken: true
       });
       
-      console.log('✅ Réponse dashboard stats:', response);
-      
       if (response && response.success && response.data) {
-        return {
+        const formattedData = {
           success: true,
           data: {
-            total_views: response.data.total_views || 0,
-            unique_views: response.data.unique_views || 0,
-            previous_views: response.data.previous_views || 0,
-            growth_rate: response.data.growth_rate || 0
+            total_views: parseInt(response.data.total_views) || 0,
+            unique_views: parseInt(response.data.unique_views) || 0,
+            previous_views: parseInt(response.data.previous_views) || 0,
+            growth_rate: parseFloat(response.data.growth_rate) || 0
           }
         };
+        
+        console.log('Données reçues avec succès');
+        return formattedData;
       }
       
       return response || this.getEmptyDashboardStats();
       
     } catch (error) {
-      console.error('❌ Erreur lors de la récupération des statistiques du dashboard:', error);
-      
-      // Gestion spécifique des erreurs
-      if (error.status === 401) {
-        return {
-          success: false,
-          error: 'Session expirée, veuillez vous reconnecter',
-          data: this.getEmptyDashboardStats().data,
-          requireAuth: true
-        };
-      }
-      
-      if (error.status === 404) {
-        return {
-          success: false,
-          error: 'Boutique non trouvée ou accès non autorisé',
-          data: this.getEmptyDashboardStats().data
-        };
-      }
-      
-      if (error.status === 500) {
-        return {
-          success: false,
-          error: 'Erreur serveur temporaire, veuillez réessayer',
-          data: this.getEmptyDashboardStats().data
-        };
-      }
+      console.error('ERREUR getDashboardStats:', error.message);
       
       return {
         success: false,
@@ -83,122 +58,290 @@ class StatsService {
   }
 
   /**
-   * Récupérer les statistiques complètes avec retry automatique
+   * Obtenir le nombre de vues (PUBLIC - sans authentification)
    */
-  static async getBoutiqueStats(boutiqueId, period = 'month', retryCount = 0) {
+  static async getViewCount(boutiqueId) {
     try {
-      console.log(`📊 Récupération des stats complètes pour boutique ${boutiqueId}, période: ${period}`);
+      console.log(`getViewCount pour boutique ${boutiqueId}`);
       
       if (!api || typeof api.get !== 'function') {
-        console.warn('API service non disponible pour les statistiques');
-        return this.getEmptyStats();
+        console.error('API service non disponible');
+        return { success: false, count: 0, error: 'Service non disponible' };
       }
 
-      // Vérifier l'authentification
-      if (!api.isAuthenticated()) {
-        console.warn('🚨 Utilisateur non authentifié');
-        return {
-          success: false,
-          error: 'Authentification requise',
-          data: this.getEmptyStats().data
-        };
+      if (!boutiqueId || boutiqueId <= 0) {
+        console.error('ID de boutique invalide');
+        return { success: false, count: 0, error: 'ID de boutique invalide' };
       }
 
-      const cacheKey = `boutique_stats_${boutiqueId}_${period}`;
-      const cachedStats = this.getCachedStats(cacheKey);
-      if (cachedStats && retryCount === 0) {
-        console.log('📦 Statistiques récupérées du cache:', cacheKey);
-        return cachedStats;
+      const cacheKey = `view_count_${boutiqueId}`;
+      const cached = this.getCachedStats(cacheKey);
+      if (cached) {
+        return cached;
       }
 
-      const response = await api.get(`/boutiques/stats/${boutiqueId}`, {
-        params: { period },
-        includeAuth: true
+      const response = await api.get(`/boutiques/stats/${boutiqueId}/public/view-count`, {
+        includeAuth: false,
+        skipAuthToken: true
       });
-      
+
+      let viewCount = 0;
       if (response && response.success && response.data) {
-        this.cacheStats(cacheKey, response, 5);
-        return response;
+        viewCount = response.data.total_views || response.data.count || 0;
+        
+        const result = { success: true, count: viewCount };
+        this.cacheStats(cacheKey, result, 2);
+        return result;
       }
-      
-      return response || this.getEmptyStats();
-      
+
+      return { success: true, count: viewCount };
+
     } catch (error) {
-      console.error('❌ Erreur lors de la récupération des statistiques complètes:', error);
-      
-      // Retry une fois en cas d'erreur 401 après refresh du token
-      if (error.status === 401 && retryCount === 0) {
-        console.log('🔄 Tentative de retry après erreur 401...');
-        await api.refreshTokenIfNeeded();
-        return this.getBoutiqueStats(boutiqueId, period, 1);
-      }
-      
-      return {
-        success: false,
-        error: error.message || 'Erreur inconnue',
-        data: this.getEmptyStats().data
+      console.error('Erreur getViewCount:', error);
+      return { 
+        success: false, 
+        count: 0, 
+        error: error.message
       };
     }
   }
 
   /**
-   * Enregistrer une vue avec retry et gestion d'erreur améliorée
+   * SEULE MÉTHODE D'ENREGISTREMENT - Format compatible MySQL
    */
-  static async recordView(boutiqueSlug) {
+  static async recordView(boutiqueSlug, additionalData = {}) {
     try {
       if (!api || typeof api.post !== 'function') {
-        console.warn('API service non disponible pour l\'enregistrement de visite');
-        return { success: false, message: 'Service non disponible' };
+        console.error('Service API non disponible');
+        return { 
+          success: false, 
+          message: 'Service non disponible',
+          view_recorded: false
+        };
       }
 
       if (!boutiqueSlug) {
-        console.warn('⚠️ Slug de boutique manquant pour l\'enregistrement de vue');
-        return { success: false, message: 'Slug de boutique manquant' };
+        return { 
+          success: false, 
+          message: 'Slug de boutique manquant',
+          view_recorded: false
+        };
       }
 
-      const viewData = {
-        timestamp: new Date().toISOString(),
-        user_agent: navigator.userAgent,
-        referrer: document.referrer || null,
-        screen_resolution: `${screen.width}x${screen.height}`,
-        language: navigator.language,
-        platform: navigator.platform,
-        cookies_enabled: navigator.cookieEnabled,
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        url: window.location.href,
-        page_title: document.title
-      };
+      // Créer des données VALIDES pour MySQL
+      const viewData = this.createMySQLCompatibleViewData(additionalData);
 
-      console.log('👁️ Enregistrement de la vue pour:', boutiqueSlug);
+      console.log(`[RECORD VIEW] Enregistrement pour: ${boutiqueSlug}`);
 
       const response = await api.post(`/boutiques/views/record/${boutiqueSlug}`, viewData, {
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest'
-        },
-        skipAuthToken: true
+        skipAuthToken: true,
+        includeAuth: false
       });
       
-      console.log('✅ Réponse enregistrement vue:', response);
-      
       if (response && response.success) {
-        return response;
+        const viewRecorded = response.data?.view_recorded === true;
+        
+        if (viewRecorded) {
+          console.log(`[RECORD VIEW] ✅ Vue ENREGISTRÉE pour: ${boutiqueSlug}`);
+        } else {
+          console.log(`[RECORD VIEW] ⚠️ Vue NON enregistrée (déjà récente) pour: ${boutiqueSlug}`);
+        }
+        
+        return { 
+          success: true, 
+          message: response.message, 
+          view_recorded: viewRecorded,
+          data: response.data 
+        };
       }
-      
-      return { success: false, message: 'Erreur lors de l\'enregistrement' };
-      
-    } catch (error) {
-      console.error('❌ Erreur lors de l\'enregistrement de la visite:', error);
       
       return { 
         success: false, 
-        error: error.message || 'Erreur inconnue'
+        message: 'Erreur lors de l\'enregistrement',
+        view_recorded: false
+      };
+      
+    } catch (error) {
+      console.error('Erreur enregistrement vue:', error);
+      return { 
+        success: false, 
+        error: error.message || 'Erreur inconnue',
+        view_recorded: false
       };
     }
   }
 
-  // Méthodes utilitaires pour les statistiques vides
+  /**
+   * Créer des données compatibles MySQL pour boutique_views
+   */
+  static createMySQLCompatibleViewData(additionalData = {}) {
+    const now = new Date();
+    
+    // Format MySQL datetime: 'YYYY-MM-DD HH:MM:SS'
+    const mysqlDateTime = now.toISOString().replace('T', ' ').substring(0, 19);
+    
+    const baseData = {
+      // Champs REQUIS par la table boutique_views
+      user_agent: (navigator.userAgent || '').substring(0, 500),
+      referrer: (document.referrer || '').substring(0, 500) || null,
+      
+      // Champs OPTIONNELS avec valeurs par défaut
+      country: additionalData.country || null,
+      city: additionalData.city || null,
+      device_type: this.detectDeviceType(),
+      browser: this.detectBrowser(),
+      os: this.detectOS(),
+      
+      // Format correct pour MySQL timestamp
+      viewed_at: mysqlDateTime,
+      
+      // Flags de contrôle
+      force_record: additionalData.force_record === true,
+      bypass_dedup: additionalData.bypass_dedup === true
+    };
+
+    // Fusionner avec les données additionnelles
+    const mergedData = { ...baseData, ...additionalData };
+    
+    // Nettoyer et valider les données pour MySQL
+    return this.sanitizeForMySQL(mergedData);
+  }
+
+  /**
+   * Nettoyer les données pour la compatibilité MySQL
+   */
+  static sanitizeForMySQL(data) {
+    const sanitized = {};
+    
+    // Mapping des champs et leurs limites selon la table
+    const fieldSpecs = {
+      user_agent: { type: 'string', maxLength: 500 },
+      referrer: { type: 'string', maxLength: 500 },
+      country: { type: 'string', maxLength: 100 },
+      city: { type: 'string', maxLength: 100 },
+      device_type: { type: 'string', maxLength: 50 },
+      browser: { type: 'string', maxLength: 100 },
+      os: { type: 'string', maxLength: 100 },
+      viewed_at: { type: 'datetime' },
+      force_record: { type: 'boolean' },
+      bypass_dedup: { type: 'boolean' }
+    };
+
+    Object.keys(fieldSpecs).forEach(key => {
+      if (data[key] !== undefined && data[key] !== null) {
+        const spec = fieldSpecs[key];
+        
+        switch (spec.type) {
+          case 'string':
+            sanitized[key] = String(data[key]).substring(0, spec.maxLength);
+            break;
+            
+          case 'datetime':
+            // S'assurer que c'est un format datetime MySQL valide
+            const dateValue = new Date(data[key]);
+            if (!isNaN(dateValue.getTime())) {
+              sanitized[key] = dateValue.toISOString().replace('T', ' ').substring(0, 19);
+            } else {
+              sanitized[key] = new Date().toISOString().replace('T', ' ').substring(0, 19);
+            }
+            break;
+            
+          case 'boolean':
+            sanitized[key] = Boolean(data[key]);
+            break;
+            
+          default:
+            sanitized[key] = data[key];
+        }
+      }
+    });
+
+    return sanitized;
+  }
+
+  /**
+   * Enregistrement asynchrone (pour ne pas bloquer l'UI)
+   */
+  static recordViewAsync(boutiqueSlug, context = {}) {
+    // Utiliser setTimeout pour éviter de bloquer l'UI
+    setTimeout(async () => {
+      try {
+        console.log(`[ASYNC RECORD] Début enregistrement asynchrone pour: ${boutiqueSlug}`);
+        
+        const result = await this.recordView(boutiqueSlug, {
+          async_mode: true,
+          ...context
+        });
+        
+        if (result && result.success && result.view_recorded) {
+          console.log(`[ASYNC RECORD] ✅ Succès pour: ${boutiqueSlug}`);
+        } else {
+          console.log(`[ASYNC RECORD] ⚠️ Non enregistré pour: ${boutiqueSlug}`);
+        }
+        
+      } catch (error) {
+        console.warn(`[ASYNC RECORD] Erreur pour ${boutiqueSlug}:`, error.message);
+      }
+    }, 100);
+  }
+
+  /**
+   * Détecter le type d'appareil
+   */
+  static detectDeviceType() {
+    const userAgent = navigator.userAgent || '';
+    if (/tablet|ipad|playbook|silk/i.test(userAgent)) {
+      return 'tablet';
+    } else if (/mobile|iphone|ipod|android|blackberry|opera mini|iemobile|wpdesktop|windows phone|nokia/i.test(userAgent)) {
+      return 'mobile';
+    }
+    return 'desktop';
+  }
+
+  /**
+   * Détecter le navigateur
+   */
+  static detectBrowser() {
+    const userAgent = navigator.userAgent || '';
+    if (userAgent.includes('Chrome')) return 'Chrome';
+    if (userAgent.includes('Firefox')) return 'Firefox';
+    if (userAgent.includes('Safari')) return 'Safari';
+    if (userAgent.includes('Edge')) return 'Edge';
+    if (userAgent.includes('Opera')) return 'Opera';
+    return 'Unknown';
+  }
+
+  /**
+   * Détecter le système d'exploitation
+   */
+  static detectOS() {
+    const userAgent = navigator.userAgent || '';
+    if (userAgent.includes('Windows')) return 'Windows';
+    if (userAgent.includes('Mac')) return 'macOS';
+    if (userAgent.includes('Linux')) return 'Linux';
+    if (userAgent.includes('Android')) return 'Android';
+    if (userAgent.includes('iOS')) return 'iOS';
+    return 'Unknown';
+  }
+
+  /**
+   * Formater le nombre de vues pour l'affichage
+   */
+  static formatViewCount(count) {
+    if (!count || count === 0) return '0';
+    
+    const num = parseInt(count);
+    
+    if (num >= 1000000) {
+      return `${(num / 1000000).toFixed(1)}M`;
+    } else if (num >= 1000) {
+      return `${(num / 1000).toFixed(1)}K`;
+    }
+    
+    return num.toString();
+  }
+
+  // Méthodes utilitaires
   static getEmptyDashboardStats() {
     return {
       success: true,
@@ -224,228 +367,6 @@ class StatsService {
     };
   }
 
-  // Méthodes existantes conservées...
-  static async getAllBoutiquesStats(period = 'month') {
-    try {
-      if (!api || typeof api.get !== 'function') {
-        console.warn('API service non disponible pour toutes les statistiques');
-        return { success: false, data: [] };
-      }
-
-      if (!api.isAuthenticated()) {
-        return {
-          success: false,
-          error: 'Authentification requise',
-          data: []
-        };
-      }
-
-      const response = await api.get('/boutiques/stats', {
-        params: { period },
-        includeAuth: true
-      });
-      
-      return response || { success: false, data: [] };
-      
-    } catch (error) {
-      console.error('❌ Erreur lors de la récupération de toutes les statistiques:', error);
-      return { 
-        success: false, 
-        data: [], 
-        error: error.message 
-      };
-    }
-  }
-
-  static async getViewsStats(boutiqueId, period = 'month') {
-    try {
-      if (!api.isAuthenticated()) {
-        return {
-          success: false,
-          error: 'Authentification requise',
-          data: {
-            total_views: 0,
-            unique_views: 0,
-            previous_views: 0,
-            growth_rate: 0,
-            views_by_period: []
-          }
-        };
-      }
-
-      const cacheKey = `views_stats_${boutiqueId}_${period}`;
-      const cachedStats = this.getCachedStats(cacheKey);
-      if (cachedStats) {
-        console.log('📦 Statistiques de vues récupérées du cache:', cacheKey);
-        return cachedStats;
-      }
-
-      const response = await api.get(`/boutiques/stats/${boutiqueId}/views`, {
-        params: { period },
-        includeAuth: true
-      });
-
-      if (response && response.success && response.data) {
-        this.cacheStats(cacheKey, response, 2); // Cache plus court pour les vues
-        return response;
-      }
-
-      return response || {
-        success: false,
-        data: {
-          total_views: 0,
-          unique_views: 0,
-          previous_views: 0,
-          growth_rate: 0,
-          views_by_period: []
-        }
-      };
-
-    } catch (error) {
-      console.error('❌ Erreur lors de la récupération des statistiques de vues:', error);
-      
-      return {
-        success: false,
-        error: error.message || 'Erreur inconnue',
-        data: {
-          total_views: 0,
-          unique_views: 0,
-          previous_views: 0,
-          growth_rate: 0,
-          views_by_period: []
-        }
-      };
-    }
-  }
-
-  // Méthodes utilitaires et de cache
-  static handleApiError(error) {
-    console.log('🔧 Gestion d\'erreur API:', error);
-    
-    if (error && error.response && error.response.status) {
-      const { status, data } = error.response;
-      
-      switch (status) {
-        case 401:
-          console.warn('🚨 Token expiré - authentification requise');
-          api.removeToken();
-          break;
-        case 403:
-          console.error('❌ Accès refusé:', data?.message || 'Accès refusé');
-          break;
-        case 404:
-          console.error('❌ Ressource non trouvée:', data?.message || 'Ressource non trouvée');
-          break;
-        case 422:
-          console.error('❌ Données invalides:', data?.errors || data?.message || 'Données invalides');
-          break;
-        case 429:
-          console.error('❌ Trop de requêtes:', data?.message || 'Trop de requêtes');
-          break;
-        case 500:
-          console.error('❌ Erreur serveur:', data?.message || 'Erreur serveur');
-          break;
-        default:
-          console.error('❌ Erreur inconnue:', data?.message || error.message || 'Erreur inconnue');
-      }
-    } else {
-      console.error('❌ Erreur:', error?.message || 'Erreur inconnue');
-    }
-  }
-
-  static formatChartData(chartData) {
-    if (!Array.isArray(chartData)) {
-      return [];
-    }
-
-    return chartData.map(item => ({
-      date: item.date,
-      views: parseInt(item.views) || 0,
-      unique_views: parseInt(item.unique_views) || 0,
-      formatted_date: item.formatted_date || this.formatDate(item.date),
-    }));
-  }
-
-  static formatDate(dateString) {
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('fr-FR', { 
-        day: '2-digit', 
-        month: '2-digit' 
-      });
-    } catch (error) {
-      console.warn('⚠️ Erreur de formatage de date:', dateString);
-      return dateString;
-    }
-  }
-
-  static calculateGrowthRate(current, previous) {
-    if (previous === 0) {
-      return current > 0 ? 100 : 0;
-    }
-    
-    return Math.round(((current - previous) / previous) * 100 * 10) / 10;
-  }
-
-  static formatViewCount(count) {
-    const numCount = parseInt(count) || 0;
-    
-    if (numCount >= 1000000) {
-      return (numCount / 1000000).toFixed(1) + 'M';
-    } else if (numCount >= 1000) {
-      return (numCount / 1000).toFixed(1) + 'K';
-    }
-    return numCount.toString();
-  }
-
-  static getPeriods() {
-    return [
-      { value: 'today', label: 'Aujourd\'hui' },
-      { value: 'week', label: 'Cette semaine' },
-      { value: 'month', label: 'Ce mois' },
-      { value: 'year', label: 'Cette année' }
-    ];
-  }
-
-  static hasValidStats(stats) {
-    return stats && 
-           typeof stats === 'object' && 
-           stats.success === true &&
-           stats.data &&
-           'total_views' in stats.data && 
-           typeof stats.data.total_views === 'number' &&
-           stats.data.total_views >= 0;
-  }
-
-  static getGrowthColor(growth) {
-    const numGrowth = parseFloat(growth) || 0;
-    
-    if (numGrowth > 0) return 'text-green-600';
-    if (numGrowth < 0) return 'text-red-600';
-    return 'text-gray-600';
-  }
-
-  static getGrowthIcon(growth) {
-    const numGrowth = parseFloat(growth) || 0;
-    
-    if (numGrowth > 0) return 'arrow-up';
-    if (numGrowth < 0) return 'arrow-down';
-    return 'minus';
-  }
-
-  static debounce(func, wait) {
-    let timeout;
-    return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func(...args);
-      };
-      clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
-    };
-  }
-
-  // Méthodes de cache améliorées
   static cacheStats(key, data, duration = 5) {
     const cacheItem = {
       data,
@@ -455,9 +376,8 @@ class StatsService {
     
     try {
       localStorage.setItem(`stats_cache_${key}`, JSON.stringify(cacheItem));
-      console.log('📦 Stats mises en cache:', key);
     } catch (error) {
-      console.warn('⚠️ Impossible de mettre en cache:', error);
+      console.warn('Impossible de mettre en cache:', error);
     }
   }
 
@@ -471,13 +391,11 @@ class StatsService {
 
       if (now - cacheItem.timestamp > cacheItem.duration) {
         localStorage.removeItem(`stats_cache_${key}`);
-        console.log('🗑️ Cache expiré supprimé:', key);
         return null;
       }
 
       return cacheItem.data;
     } catch (error) {
-      console.warn('⚠️ Erreur lors de la récupération du cache:', error);
       return null;
     }
   }
@@ -485,129 +403,38 @@ class StatsService {
   static clearStatsCache() {
     try {
       const keys = Object.keys(localStorage);
-      const deletedKeys = [];
-      
       keys.forEach(key => {
         if (key.startsWith('stats_cache_')) {
           localStorage.removeItem(key);
-          deletedKeys.push(key);
         }
       });
-      
-      console.log('🗑️ Cache des statistiques nettoyé:', deletedKeys.length, 'entrées supprimées');
     } catch (error) {
-      console.warn('⚠️ Erreur lors du nettoyage du cache:', error);
+      console.warn('Erreur lors du nettoyage du cache:', error);
     }
   }
 
-  // Méthodes avancées avec retry
-  static async recordViewWithRetry(boutiqueSlug, maxRetries = 3) {
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`👁️ Tentative ${attempt}/${maxRetries} d'enregistrement de vue pour: ${boutiqueSlug}`);
-        
-        const result = await this.recordView(boutiqueSlug);
-        
-        if (result.success) {
-          console.log('✅ Enregistrement de vue réussi à la tentative', attempt);
-          return result;
-        }
-        
-        // Ne pas retry pour les erreurs 404 ou 403
-        if (result.status && [404, 403].includes(result.status)) {
-          console.warn('⚠️ Arrêt des tentatives pour erreur définitive:', result.status);
-          return result;
-        }
-        
-        if (attempt === maxRetries) {
-          console.warn('⚠️ Échec après toutes les tentatives');
-          return result;
-        }
-        
-        // Délai exponentiel entre les tentatives
-        const delay = Math.pow(2, attempt) * 1000;
-        console.log(`⏳ Attente de ${delay}ms avant la prochaine tentative...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        
-      } catch (error) {
-        console.error(`❌ Tentative ${attempt}/${maxRetries} échouée:`, error);
-        
-        if (attempt === maxRetries) {
-          return { success: false, error: error.message };
-        }
-        
-        const delay = Math.pow(2, attempt) * 1000;
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-  }
+  /**
+   * Debug des données avant envoi
+   */
+  static debugViewData(boutiqueSlug, additionalData = {}) {
+    const validData = this.createMySQLCompatibleViewData(additionalData);
 
-  static async recordViewAsync(boutiqueSlug) {
-    // Enregistrement asynchrone avec délai pour éviter de bloquer l'UI
-    setTimeout(async () => {
-      try {
-        await this.recordViewWithRetry(boutiqueSlug, 2);
-      } catch (error) {
-        console.warn('⚠️ Échec silencieux de l\'enregistrement de vue:', error);
-      }
-    }, 100);
-  }
-
-  static async batchRecordViews(boutiquesSlugs) {
-    if (!Array.isArray(boutiquesSlugs) || boutiquesSlugs.length === 0) {
-      console.warn('⚠️ Aucun slug fourni pour l\'enregistrement batch');
-      return [];
-    }
-
-    console.log('📊 Enregistrement batch pour', boutiquesSlugs.length, 'boutiques');
+    console.group(`Debug VIEW DATA pour ${boutiqueSlug}`);
+    console.log('Données valides:', validData);
+    console.log('Nombre de champs:', Object.keys(validData).length);
+    console.log('Champs inclus:', Object.keys(validData));
     
-    const promises = boutiquesSlugs.map(slug => 
-      this.recordView(slug).catch(error => ({ slug, error: error.message }))
-    );
-    
-    try {
-      const results = await Promise.allSettled(promises);
-      console.log('✅ Résultats batch enregistrement:', results);
-      return results;
-    } catch (error) {
-      console.error('❌ Erreur lors du batch d\'enregistrement:', error);
-      return [];
-    }
-  }
-
-  // Méthode de diagnostic
-  static async testStatsConnection() {
-    console.log('🔍 Test de connexion aux statistiques...');
-    
-    try {
-      if (!api.isAuthenticated()) {
-        return {
-          success: false,
-          message: 'Non authentifié',
-          details: 'Token manquant ou invalide'
-        };
+    // Vérifier les limites de taille
+    Object.keys(validData).forEach(key => {
+      const value = validData[key];
+      if (typeof value === 'string') {
+        console.log(`${key}: ${value.length} caractères`);
       }
+    });
+    
+    console.groupEnd();
 
-      // Test avec une boutique fictive
-      const testResponse = await api.get('/boutiques/stats', {
-        params: { period: 'today' },
-        includeAuth: true
-      });
-
-      return {
-        success: true,
-        message: 'Connexion aux statistiques OK',
-        details: testResponse
-      };
-
-    } catch (error) {
-      return {
-        success: false,
-        message: 'Échec de connexion aux statistiques',
-        details: error.message,
-        status: error.status
-      };
-    }
+    return { validData };
   }
 }
 

@@ -1,6 +1,6 @@
 import ApiService from './apiService';
 
-const API_BASE_URL = 'http://localhost:8000'; // Définir l'URL directement comme dans apiService.js
+const API_BASE_URL = 'http://localhost:8000';
 
 class BoutiqueService {
   constructor() {
@@ -23,15 +23,12 @@ class BoutiqueService {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Accept': 'application/json',
-          // Ne pas définir Content-Type pour FormData - le navigateur le fait automatiquement
         },
         body: boutiqueData,
       });
 
       console.log('Statut de la réponse:', response.status);
-      console.log('Headers de la réponse:', Object.fromEntries(response.headers.entries()));
 
-      // Toujours essayer de parser le JSON
       let data;
       const responseText = await response.text();
       console.log('Réponse brute du serveur:', responseText);
@@ -40,18 +37,16 @@ class BoutiqueService {
         data = JSON.parse(responseText);
       } catch (parseError) {
         console.error('Erreur de parsing JSON:', parseError);
-        console.error('Contenu de la réponse:', responseText);
         throw {
           response: {
             status: response.status,
-            data: { message: `Erreur serveur ${response.status}: Réponse invalide - ${responseText}` }
+            data: { message: `Erreur serveur ${response.status}: Réponse invalide` }
           }
         };
       }
 
       if (!response.ok) {
         console.error('Erreur HTTP:', response.status, data);
-        // Créer un objet d'erreur avec la structure attendue
         const error = new Error(data.message || `Erreur ${response.status}`);
         error.response = {
           status: response.status,
@@ -64,12 +59,10 @@ class BoutiqueService {
     } catch (error) {
       console.error('Erreur lors de la création de la boutique:', error);
       
-      // Si l'erreur a déjà une structure response, la conserver
       if (error.response) {
         throw error;
       }
       
-      // Sinon, créer une structure d'erreur cohérente
       throw {
         response: {
           status: 500,
@@ -162,31 +155,7 @@ class BoutiqueService {
     }
   }
 
-  // Nouvelles méthodes pour les abonnements
-  async getSubscriptionStatus(id) {
-    try {
-      return await this.apiService.request(`/boutiques/${id}/subscription-status`, {
-        method: 'GET',
-      });
-    } catch (error) {
-      console.error('Erreur lors de la récupération du statut d\'abonnement:', error);
-      throw error;
-    }
-  }
-
-  async upgradeSubscription(id, subscriptionData) {
-    try {
-      return await this.apiService.request(`/boutiques/${id}/upgrade-subscription`, {
-        method: 'POST',
-        data: subscriptionData,
-      });
-    } catch (error) {
-      console.error('Erreur lors de la mise à niveau de l\'abonnement:', error);
-      throw error;
-    }
-  }
-
-  // Méthodes pour les statistiques (corrigées)
+  // Méthodes pour les statistiques (corrigées selon le nouveau backend)
   async getBoutiqueStats(boutiqueId, period = 'month') {
     try {
       return await this.apiService.request(`/boutiques/${boutiqueId}/stats`, {
@@ -211,76 +180,164 @@ class BoutiqueService {
     }
   }
 
-  async getAllBoutiquesStats(period = 'month') {
+  async getPublicViewCount(boutiqueId) {
     try {
-      return await this.apiService.request('/boutiques/stats', {
+      return await this.apiService.request(`/public/boutiques/${boutiqueId}/views`, {
         method: 'GET',
-        params: { period }
+        includeAuth: false
       });
     } catch (error) {
-      console.error('Erreur lors de la récupération des statistiques globales:', error);
+      console.error('Erreur lors de la récupération du compteur de vues public:', error);
       throw error;
     }
   }
 
-  // Enregistrer une vue de boutique (appelé depuis la page publique de la boutique)
-  async recordView(boutiqueSlug) {
+  // ROUTE CORRIGÉE: Enregistrer une vue de boutique standard
+  async recordView(boutiqueSlug, viewData = {}) {
     try {
-      return await this.apiService.request(`/public/boutiques/${boutiqueSlug}/view`, {
+      const payload = {
+        ip_address: viewData.ip_address,
+        user_agent: viewData.user_agent || navigator.userAgent,
+        referrer: viewData.referrer || document.referrer,
+        country: viewData.country,
+        city: viewData.city,
+        device_type: viewData.device_type,
+        browser: viewData.browser,
+        os: viewData.os,
+        viewed_at: viewData.viewed_at || new Date().toISOString(),
+        force_record: viewData.force_record || false,
+        bypass_dedup: viewData.bypass_dedup || false
+      };
+
+      // NOUVELLE ROUTE CORRIGÉE
+      return await this.apiService.request(`/boutiques/${boutiqueSlug}/view`, {
         method: 'POST',
-        includeAuth: false // Cette route est publique
+        body: JSON.stringify(payload),
+        includeAuth: false
       });
     } catch (error) {
-      // Ne pas lever d'erreur pour ne pas casser l'affichage de la boutique
       console.warn('Erreur lors de l\'enregistrement de la vue:', error);
-      return { success: false };
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ROUTE CORRIGÉE: Enregistrer une vue forcée
+  async recordViewForced(boutiqueSlug, viewData = {}) {
+    try {
+      const payload = {
+        ip_address: viewData.ip_address,
+        user_agent: viewData.user_agent || navigator.userAgent,
+        referrer: viewData.referrer || document.referrer,
+        country: viewData.country,
+        city: viewData.city,
+        device_type: viewData.device_type,
+        browser: viewData.browser,
+        os: viewData.os,
+        viewed_at: viewData.viewed_at || new Date().toISOString(),
+        force_record: true,
+        bypass_dedup: true
+      };
+
+      // NOUVELLE ROUTE CORRIGÉE
+      return await this.apiService.request(`/boutiques/${boutiqueSlug}/view/forced`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        includeAuth: false
+      });
+    } catch (error) {
+      console.warn('Erreur lors de l\'enregistrement de la vue forcée:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // ROUTE CORRIGÉE: Enregistrer une vue avec données étendues
+  async recordViewExtended(boutiqueSlug, viewData = {}) {
+    try {
+      const payload = {
+        ip_address: viewData.ip_address,
+        user_agent: viewData.user_agent || navigator.userAgent,
+        referrer: viewData.referrer || document.referrer,
+        country: viewData.country,
+        city: viewData.city,
+        device_type: viewData.device_type,
+        browser: viewData.browser,
+        os: viewData.os,
+        viewed_at: viewData.viewed_at || new Date().toISOString(),
+        force_record: viewData.force_record || false,
+        bypass_dedup: viewData.bypass_dedup || false
+      };
+
+      // NOUVELLE ROUTE CORRIGÉE
+      return await this.apiService.request(`/boutiques/${boutiqueSlug}/view/extended`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        includeAuth: false
+      });
+    } catch (error) {
+      console.warn('Erreur lors de l\'enregistrement de la vue étendue:', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // Méthodes pour les abonnements
+  async getSubscriptionStatus(id) {
+    try {
+      return await this.apiService.request(`/boutiques/${id}/subscription-status`, {
+        method: 'GET',
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération du statut d\'abonnement:', error);
+      throw error;
+    }
+  }
+
+  async upgradeSubscription(id, subscriptionData) {
+    try {
+      return await this.apiService.request(`/boutiques/${id}/upgrade-subscription`, {
+        method: 'POST',
+        data: subscriptionData,
+      });
+    } catch (error) {
+      console.error('Erreur lors de la mise à niveau de l\'abonnement:', error);
+      throw error;
     }
   }
 
   createFormData(data) {
     const formData = new FormData();
     
-    // Debug: Log tous les champs avant de les ajouter
     console.log('Création FormData avec:', data);
     
     // Ajouter tous les champs obligatoires
     if (data.nom) {
       formData.append('nom', data.nom);
-      console.log('Ajout nom:', data.nom);
     }
     
     if (data.description) {
       formData.append('description', data.description);
-      console.log('Ajout description:', data.description);
     }
     
     if (data.categorie) {
       formData.append('categorie', data.categorie);
-      console.log('Ajout categorie:', data.categorie);
     }
     
     // Ajouter les champs optionnels seulement s'ils ont une valeur
     if (data.slogan && data.slogan.trim()) {
       formData.append('slogan', data.slogan);
-      console.log('Ajout slogan:', data.slogan);
     }
     
     if (data.couleur_accent) {
       formData.append('couleur_accent', data.couleur_accent);
-      console.log('Ajout couleur_accent:', data.couleur_accent);
     }
     
     if (data.mots_cles && data.mots_cles.trim()) {
       formData.append('mots_cles', data.mots_cles);
-      console.log('Ajout mots_cles:', data.mots_cles);
     }
     
     if (data.logo && data.logo instanceof File) {
       formData.append('logo', data.logo);
-      console.log('Ajout logo:', data.logo.name, data.logo.size, data.logo.type);
     }
 
-    // Debug: Vérifier le contenu final du FormData
     console.log('FormData créé avec les entrées:');
     for (let [key, value] of formData.entries()) {
       if (value instanceof File) {
@@ -355,14 +412,24 @@ class BoutiqueService {
 
   // Méthodes utilitaires pour les statistiques
   static formatStatsData(stats) {
+    if (!stats) return {
+      totalViews: 0,
+      uniqueViews: 0,
+      viewsGrowth: 0,
+      chartData: [],
+      deviceStats: {},
+      browserStats: [],
+      referrerStats: []
+    };
+
     return {
-      totalViews: stats.views?.total_views || 0,
-      uniqueViews: stats.views?.unique_views || 0,
-      viewsGrowth: stats.views?.growth || 0,
+      totalViews: stats.total_views || 0,
+      uniqueViews: stats.unique_views || 0,
+      viewsGrowth: stats.growth_rate || stats.growth || 0,
       chartData: stats.chart_data || [],
-      deviceStats: stats.devices || {},
-      browserStats: stats.browsers || [],
-      referrerStats: stats.referrers || []
+      deviceStats: stats.device_stats || {},
+      browserStats: stats.browser_stats || [],
+      referrerStats: stats.referrer_stats || []
     };
   }
 
@@ -397,11 +464,9 @@ class BoutiqueService {
     const plan = boutique.subscription?.current_plan;
     if (!plan) return false;
     
-    // Si limite_produits est null ou -1, pas de limite
     if (plan.limite_produits === null || plan.limite_produits === -1) return true;
     
-    // Sinon vérifier la limite (vous devrez passer le nombre de produits actuels)
-    return true; // À implémenter selon votre logique
+    return true;
   }
 
   static getSubscriptionWarnings(boutique) {
@@ -428,21 +493,76 @@ class BoutiqueService {
     return warnings;
   }
 
-  // Générer un slug à partir du nom (méthode statique)
-  static generateSlug(name) {
-    return name
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
+  // Détecter les informations du navigateur/device
+  static detectDeviceInfo() {
+    const userAgent = navigator.userAgent;
+    
+    return {
+      user_agent: userAgent,
+      device_type: this.detectDeviceType(userAgent),
+      browser: this.detectBrowser(userAgent),
+      os: this.detectOS(userAgent)
+    };
   }
 
-  // Obtenir l'URL du logo (méthode statique)
-  static getLogoUrl(logoPath) {
-    if (!logoPath) return null;
-    if (logoPath.startsWith('http')) return logoPath;
-    return `${process.env.REACT_APP_API_URL || API_BASE_URL}/storage/${logoPath}`;
+  static detectDeviceType(userAgent) {
+    const ua = userAgent.toLowerCase();
+    
+    if (/mobile|android|iphone|ipad|phone/i.test(ua)) {
+      if (/ipad|tablet/i.test(ua)) {
+        return 'tablet';
+      }
+      return 'mobile';
+    } else if (/tablet|ipad/i.test(ua)) {
+      return 'tablet';
+    }
+    
+    return 'desktop';
+  }
+
+  static detectBrowser(userAgent) {
+    const browsers = [
+      { name: 'Chrome', pattern: /chrome/i },
+      { name: 'Firefox', pattern: /firefox/i },
+      { name: 'Safari', pattern: /safari/i },
+      { name: 'Edge', pattern: /edge/i },
+      { name: 'Opera', pattern: /opera/i },
+      { name: 'Internet Explorer', pattern: /msie|trident/i }
+    ];
+
+    for (const browser of browsers) {
+      if (browser.pattern.test(userAgent)) {
+        return browser.name;
+      }
+    }
+
+    return 'Unknown';
+  }
+
+  static detectOS(userAgent) {
+    const osList = [
+      { name: 'Windows 11', pattern: /windows nt 10.0.*build 22/i },
+      { name: 'Windows 10', pattern: /windows nt 10/i },
+      { name: 'Windows 8.1', pattern: /windows nt 6.3/i },
+      { name: 'Windows 8', pattern: /windows nt 6.2/i },
+      { name: 'Windows 7', pattern: /windows nt 6.1/i },
+      { name: 'Windows Vista', pattern: /windows nt 6.0/i },
+      { name: 'Windows XP', pattern: /windows nt 5.1/i },
+      { name: 'Mac OS X', pattern: /mac os x/i },
+      { name: 'macOS', pattern: /macintosh|mac os x/i },
+      { name: 'Linux', pattern: /linux/i },
+      { name: 'Android', pattern: /android/i },
+      { name: 'iOS', pattern: /iphone|ipad|ipod/i },
+      { name: 'Ubuntu', pattern: /ubuntu/i }
+    ];
+
+    for (const os of osList) {
+      if (os.pattern.test(userAgent)) {
+        return os.name;
+      }
+    }
+
+    return 'Unknown';
   }
 }
 

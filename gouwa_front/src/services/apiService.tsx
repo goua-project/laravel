@@ -1,6 +1,8 @@
+
+// src/services/apiService.js
 // src/services/apiService.js
 
-const API_BASE_URL = 'http://localhost:8000/api'; // URL de votre backend Laravel
+const API_BASE_URL = 'http://localhost:8000/api';
 
 class ApiService {
   constructor() {
@@ -12,10 +14,9 @@ class ApiService {
     const headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
-      'X-Requested-With': 'XMLHttpRequest', // Header important pour Laravel
+      'X-Requested-With': 'XMLHttpRequest',
     };
 
-    // Si includeAuth est true et qu'on ne skip pas le token ET qu'on a un token
     if (includeAuth && !skipAuthToken && this.token) {
       headers['Authorization'] = `Bearer ${this.token}`;
     }
@@ -23,140 +24,112 @@ class ApiService {
     return headers;
   }
 
-  // Méthode générique pour les requêtes avec logs détaillés
   async request(endpoint, options = {}) {
     const url = `${API_BASE_URL}${endpoint}`;
     const method = options.method || 'GET';
-    const isViewRecording = endpoint.includes('record-view');
+    const isViewRecording = endpoint.includes('record') || endpoint.includes('views');
     
-    // Configuration de base
     const config = {
       mode: 'cors',
       credentials: 'omit',
-      headers: this.getHeaders(
-        options.includeAuth !== false, 
-        options.skipAuthToken === true
-      ),
-      ...options,
+      method,
+      headers: {
+        ...this.getHeaders(
+          options.includeAuth !== false, 
+          options.skipAuthToken === true
+        ),
+        ...options.headers
+      }
     };
 
-    // Log de débogage détaillé pour l'enregistrement des vues
-    if (isViewRecording) {
-      console.log('👁️ ENREGISTREMENT VUE - Request:', {
-        url,
-        method,
-        headers: config.headers,
-        bodySize: config.body ? config.body.length : 0,
-        timestamp: new Date().toISOString()
+    // Ajouter le body pour les requêtes POST/PUT
+    if (options.body && (method === 'POST' || method === 'PUT')) {
+      config.body = options.body;
+    }
+
+    let finalUrl = url;
+    if (options.params) {
+      const searchParams = new URLSearchParams();
+      Object.keys(options.params).forEach(key => {
+        if (options.params[key] !== null && options.params[key] !== undefined) {
+          searchParams.append(key, options.params[key]);
+        }
       });
-    } else {
-      console.log('🚀 API Request:', {
-        url,
+      if (searchParams.toString()) {
+        finalUrl += `?${searchParams.toString()}`;
+      }
+    }
+
+    if (isViewRecording) {
+      console.log('REQUEST VIEW - Configuration:', {
+        url: finalUrl,
         method,
+        hasBody: !!config.body,
+        bodySize: config.body ? config.body.length : 0,
         headers: config.headers,
-        hasBody: !!config.body
+        timestamp: new Date().toISOString()
       });
     }
 
     try {
       const startTime = performance.now();
-      const response = await fetch(url, config);
+      const response = await fetch(finalUrl, config);
       const endTime = performance.now();
       const duration = Math.round(endTime - startTime);
 
-      // Log détaillé de la réponse pour les vues
-      if (isViewRecording) {
-        console.log('👁️ ENREGISTREMENT VUE - Response:', {
-          status: response.status,
-          statusText: response.statusText,
-          duration: `${duration}ms`,
-          headers: Object.fromEntries(response.headers.entries()),
-          url: response.url
-        });
-      } else {
-        console.log('📡 API Response:', {
-          status: response.status,
-          statusText: response.statusText,
-          duration: `${duration}ms`
-        });
-      }
-      
-      // Tenter de parser le JSON
       let data;
       const contentType = response.headers.get('content-type');
       
       if (contentType && contentType.includes('application/json')) {
-        try {
-          data = await response.json();
-        } catch (parseError) {
-          console.error('💥 Erreur de parsing JSON:', parseError);
-          data = { 
-            success: false, 
-            error: 'Réponse non-JSON du serveur',
-            raw_response: await response.text()
-          };
-        }
+        data = await response.json();
       } else {
         const textResponse = await response.text();
-        console.warn('⚠️ Réponse non-JSON reçue:', contentType, textResponse);
+        console.warn('Réponse non-JSON reçue:', contentType, textResponse.substring(0, 200));
         data = { 
           success: false, 
           error: 'Réponse non-JSON du serveur',
           content_type: contentType,
-          raw_response: textResponse
+          raw_response: textResponse.substring(0, 500)
         };
       }
 
-      // Log spécialisé pour les vues
       if (isViewRecording) {
         if (response.ok) {
-          console.log('✅ ENREGISTREMENT VUE RÉUSSI:', {
-            boutique: endpoint.split('/').pop(),
-            status: response.status,
-            success: data.success,
-            message: data.message,
-            duration: `${duration}ms`
-          });
+          const viewRecorded = data.data && data.data.view_recorded === true;
+          
+          if (viewRecorded) {
+            console.log('VIEW RECORD SUCCESS:', {
+              boutique: this.extractBoutiqueSlug(endpoint),
+              status: response.status,
+              view_recorded: data.data.view_recorded,
+              message: data.message,
+              duration: `${duration}ms`
+            });
+          } else {
+            console.warn('VIEW RECORD NOT NEEDED:', {
+              boutique: this.extractBoutiqueSlug(endpoint),
+              status: response.status,
+              view_recorded: data.data ? data.data.view_recorded : 'unknown',
+              message: data.message,
+              duration: `${duration}ms`
+            });
+          }
         } else {
-          console.error('❌ ENREGISTREMENT VUE ÉCHOUÉ:', {
-            boutique: endpoint.split('/').pop(),
+          console.error('VIEW RECORD FAILED:', {
+            boutique: this.extractBoutiqueSlug(endpoint),
             status: response.status,
-            error: data.message || data.error,
-            details: data,
+            error: data.message || data.error || 'Erreur inconnue',
+            errors: data.errors,
             duration: `${duration}ms`
           });
         }
-      } else {
-        console.log('📄 API Response Data:', data);
       }
 
-      // Gestion des erreurs HTTP
       if (!response.ok) {
         const error = new Error(data.message || `HTTP ${response.status}: ${response.statusText}`);
-        
-        // Ajouter les erreurs de validation si elles existent
-        if (data.errors) {
-          error.errors = data.errors;
-          if (isViewRecording) {
-            console.log('❌ Erreurs de validation pour vue:', data.errors);
-          }
-        }
-        
-        // Ajouter des détails sur l'erreur
         error.status = response.status;
         error.data = data;
         error.response = { status: response.status, data };
-        
-        // Log d'erreur spécialisé pour les vues
-        if (isViewRecording) {
-          console.error('❌ ERREUR DÉTAILLÉE ENREGISTREMENT VUE:', {
-            url,
-            status: response.status,
-            message: error.message,
-            data: data,
-            headers: config.headers
-          });
-        }
         
         throw error;
       }
@@ -164,23 +137,14 @@ class ApiService {
       return data;
 
     } catch (error) {
-      // Log d'erreur détaillé
       if (isViewRecording) {
-        console.error('💥 ERREUR CRITIQUE ENREGISTREMENT VUE:', {
-          boutique: endpoint.split('/').pop(),
-          url,
+        console.error('VIEW RECORD CRITICAL ERROR:', {
+          boutique: this.extractBoutiqueSlug(endpoint),
+          url: finalUrl,
           message: error.message,
           status: error.status,
-          network: !error.status ? 'Erreur réseau possible' : 'Erreur HTTP',
-          stack: error.stack
-        });
-      } else {
-        console.error('💥 API Error:', {
-          url,
-          message: error.message,
-          status: error.status,
-          errors: error.errors,
-          data: error.data
+          data: error.data,
+          network: !error.status ? 'Network Error' : 'HTTP Error'
         });
       }
       
@@ -188,9 +152,15 @@ class ApiService {
     }
   }
 
-  // Méthodes d'authentification améliorées
+  // Extraire le slug de boutique depuis l'endpoint
+  extractBoutiqueSlug(endpoint) {
+    const matches = endpoint.match(/\/([^\/]+)(?:\?|$)/);
+    return matches ? matches[1] : 'unknown';
+  }
+
+  // Méthodes d'authentification
   async register(userData) {
-    console.log('📝 Tentative d\'inscription avec:', { ...userData, password: '***' });
+    console.log('Tentative d\'inscription avec:', { ...userData, password: '***' });
     
     const response = await this.request('/auth/register', {
       method: 'POST',
@@ -206,7 +176,7 @@ class ApiService {
   }
 
   async login(email, password) {
-    console.log('🔐 Tentative de connexion pour:', email);
+    console.log('Tentative de connexion pour:', email);
     
     const response = await this.request('/auth/login', {
       method: 'POST',
@@ -222,26 +192,33 @@ class ApiService {
   }
 
   async logout() {
-    console.log('🔓 Déconnexion en cours...');
+    console.log('Déconnexion en cours...');
     try {
       await this.request('/auth/logout', {
         method: 'POST',
       });
-      console.log('✅ Déconnexion réussie côté serveur');
+      console.log('Déconnexion réussie côté serveur');
     } catch (error) {
-      console.warn('⚠️ Erreur lors de la déconnexion côté serveur:', error.message);
+      console.warn('Erreur lors de la déconnexion côté serveur:', error.message);
     } finally {
       this.removeToken();
     }
   }
 
   async getCurrentUser() {
-    console.log('👤 Récupération de l\'utilisateur actuel...');
+    console.log('Récupération de l\'utilisateur actuel...');
     return this.request('/auth/me');
   }
 
-  // Méthodes spécialisées pour les statistiques
+  // Méthodes HTTP principales
   async post(endpoint, data, options = {}) {
+    const isValidData = this.validateViewData(endpoint, data);
+    
+    if (!isValidData.valid) {
+      console.error('Données invalides détectées:', isValidData.errors);
+      throw new Error(`Données invalides: ${isValidData.errors.join(', ')}`);
+    }
+
     return this.request(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -250,21 +227,9 @@ class ApiService {
   }
 
   async get(endpoint, options = {}) {
-    let url = endpoint;
-    if (options.params) {
-      const searchParams = new URLSearchParams();
-      Object.keys(options.params).forEach(key => {
-        if (options.params[key] !== null && options.params[key] !== undefined) {
-          searchParams.append(key, options.params[key]);
-        }
-      });
-      url += `?${searchParams.toString()}`;
-    }
-
-    return this.request(url, {
+    return this.request(endpoint, {
       method: 'GET',
-      headers: options.headers || {},
-      includeAuth: options.includeAuth !== false
+      ...options
     });
   }
 
@@ -283,17 +248,85 @@ class ApiService {
     });
   }
 
-  // Gestion du token améliorée
+  // Validation des données avant envoi
+  validateViewData(endpoint, data) {
+    const isViewEndpoint = endpoint.includes('record') || endpoint.includes('views');
+    
+    if (!isViewEndpoint) {
+      return { valid: true, errors: [] };
+    }
+
+    const errors = [];
+    const allowedFields = [
+      'user_agent', 'referrer', 'country', 'city', 
+      'device_type', 'browser', 'os', 'viewed_at',
+      'force_record', 'bypass_dedup'
+    ];
+
+    const fieldLimits = {
+      user_agent: 500,
+      referrer: 500,
+      country: 100,
+      city: 100,
+      device_type: 50,
+      browser: 100,
+      os: 100
+    };
+
+    // Vérifier les champs non autorisés
+    Object.keys(data).forEach(field => {
+      if (!allowedFields.includes(field)) {
+        errors.push(`Champ non autorisé: ${field}`);
+      }
+    });
+
+    // Vérifier les limites de taille pour les chaînes
+    Object.keys(data).forEach(field => {
+      const value = data[field];
+      if (typeof value === 'string' && fieldLimits[field]) {
+        if (value.length > fieldLimits[field]) {
+          errors.push(`${field} dépasse la limite de ${fieldLimits[field]} caractères (${value.length})`);
+        }
+      }
+    });
+
+    // Vérifier les types de données
+    if (data.force_record !== undefined && typeof data.force_record !== 'boolean') {
+      errors.push('force_record doit être un booléen');
+    }
+
+    if (data.bypass_dedup !== undefined && typeof data.bypass_dedup !== 'boolean') {
+      errors.push('bypass_dedup doit être un booléen');
+    }
+
+    if (data.viewed_at !== undefined && !this.isValidDate(data.viewed_at)) {
+      errors.push('viewed_at doit être une date valide');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors
+    };
+  }
+
+  // Valider une date
+  isValidDate(dateString) {
+    if (!dateString) return false;
+    const date = new Date(dateString);
+    return date instanceof Date && !isNaN(date);
+  }
+
+  // Gestion du token
   setToken(token) {
     this.token = token;
     localStorage.setItem('auth_token', token);
-    console.log('🔑 Token sauvegardé avec succès');
+    console.log('Token sauvegardé avec succès');
   }
 
   removeToken() {
     this.token = null;
     localStorage.removeItem('auth_token');
-    console.log('🗑️ Token supprimé avec succès');
+    console.log('Token supprimé avec succès');
   }
 
   getToken() {
@@ -304,9 +337,9 @@ class ApiService {
     return !!this.token;
   }
 
-  // Méthode de diagnostic pour déboguer les problèmes d'API
+  // Méthodes de test et debug
   async testConnection() {
-    console.log('🔍 Test de connexion API...');
+    console.log('Test de connexion API...');
     try {
       const response = await fetch(`${API_BASE_URL}/health`, {
         method: 'GET',
@@ -314,7 +347,7 @@ class ApiService {
         credentials: 'omit'
       });
       
-      console.log('🏥 Status de santé API:', {
+      console.log('Status de santé API:', {
         status: response.status,
         statusText: response.statusText,
         headers: Object.fromEntries(response.headers.entries())
@@ -322,34 +355,215 @@ class ApiService {
       
       return response.ok;
     } catch (error) {
-      console.error('❌ Test de connexion échoué:', error);
+      console.error('Test de connexion échoué:', error);
       return false;
     }
   }
 
-  // Méthode pour tester spécifiquement l'enregistrement des vues
+  // Test spécifique pour l'enregistrement des vues
   async testViewRecording(testSlug = 'test-boutique') {
-    console.log('🧪 Test d\'enregistrement de vue...');
+    console.log('Test d\'enregistrement de vue...');
     
     try {
       const testData = {
-        timestamp: new Date().toISOString(),
         user_agent: 'Test User Agent',
-        test: true
+        referrer: 'http://test.com',
+        device_type: 'desktop',
+        browser: 'Chrome',
+        os: 'Windows',
+        country: 'France',
+        city: 'Paris',
+        force_record: true,
+        bypass_dedup: true,
+        viewed_at: new Date().toISOString()
       };
 
       const response = await this.post(
-        `/boutiques/stats/record-view/${testSlug}`, 
+        `/boutiques/views/record/${testSlug}`, 
         testData, 
-        { skipAuthToken: true }
+        { 
+          skipAuthToken: true,
+          includeAuth: false
+        }
       );
 
-      console.log('✅ Test d\'enregistrement réussi:', response);
+      console.log('Test d\'enregistrement réussi:', response);
       return { success: true, data: response };
     } catch (error) {
-      console.error('❌ Test d\'enregistrement échoué:', error);
-      return { success: false, error: error.message };
+      console.error('Test d\'enregistrement échoué:', error);
+      return { success: false, error: error.message, data: error.data };
     }
+  }
+
+  // Test avec des données forcées
+  async testViewRecordingForced(testSlug = 'test-boutique') {
+    console.log('Test d\'enregistrement de vue FORCÉ...');
+    
+    try {
+      const testData = {
+        user_agent: 'Test User Agent - Forced',
+        referrer: null,
+        device_type: 'desktop',
+        browser: 'Chrome',
+        os: 'Windows',
+        force_record: true,
+        bypass_dedup: true,
+        viewed_at: new Date().toISOString()
+      };
+
+      const response = await this.post(
+        `/boutiques/views/force-record/${testSlug}`, 
+        testData, 
+        { 
+          skipAuthToken: true,
+          includeAuth: false,
+          params: {
+            force: 'true',
+            bypass_dedup: 'true'
+          }
+        }
+      );
+
+      console.log('Test d\'enregistrement forcé réussi:', response);
+      return { success: true, data: response };
+    } catch (error) {
+      console.error('Test d\'enregistrement forcé échoué:', error);
+      return { success: false, error: error.message, data: error.data };
+    }
+  }
+
+  // Debug complet des problèmes d'enregistrement
+  async debugViewRecording(boutiqueSlug) {
+    console.log('DEBUG - Analyse des problèmes d\'enregistrement pour:', boutiqueSlug);
+    
+    const debugResults = {
+      slug: boutiqueSlug,
+      timestamp: new Date().toISOString(),
+      tests: {},
+      validations: {},
+      connectivity: {}
+    };
+
+    // Test 1: Validation des données
+    try {
+      const sampleData = {
+        user_agent: navigator.userAgent.substring(0, 500),
+        referrer: document.referrer.substring(0, 500) || null,
+        device_type: 'desktop',
+        browser: 'Chrome',
+        os: 'Windows',
+        force_record: true,
+        bypass_dedup: true
+      };
+
+      const validation = this.validateViewData(`/boutiques/views/record/${boutiqueSlug}`, sampleData);
+      debugResults.validations.sample_data = validation;
+      
+    } catch (error) {
+      debugResults.validations.sample_data = { 
+        valid: false, 
+        error: error.message 
+      };
+    }
+
+    // Test 2: Connectivité
+    try {
+      const connectionOk = await this.testConnection();
+      debugResults.connectivity.api_health = connectionOk;
+    } catch (error) {
+      debugResults.connectivity.api_health = false;
+      debugResults.connectivity.error = error.message;
+    }
+
+    // Test 3: Enregistrement normal
+    try {
+      const normalResult = await this.testViewRecording(boutiqueSlug);
+      debugResults.tests.normal = normalResult;
+    } catch (error) {
+      debugResults.tests.normal = { success: false, error: error.message };
+    }
+
+    // Test 4: Enregistrement forcé
+    try {
+      const forcedResult = await this.testViewRecordingForced(boutiqueSlug);
+      debugResults.tests.forced = forcedResult;
+    } catch (error) {
+      debugResults.tests.forced = { success: false, error: error.message };
+    }
+
+    // Test 5: Debug de validation côté serveur
+    try {
+      const debugValidation = await this.get(`/boutiques/views/debug-validation/${boutiqueSlug}`, {
+        skipAuthToken: true,
+        includeAuth: false
+      });
+      debugResults.server_debug = debugValidation;
+    } catch (error) {
+      debugResults.server_debug = { error: error.message };
+    }
+
+    console.log('DEBUG - Résultats complets:', debugResults);
+    return debugResults;
+  }
+
+  // Nettoyage des données avant envoi
+  cleanDataForSending(data) {
+    const cleaned = {};
+    
+    // Champs autorisés uniquement
+    const allowedFields = [
+      'user_agent', 'referrer', 'country', 'city', 
+      'device_type', 'browser', 'os', 'viewed_at',
+      'force_record', 'bypass_dedup'
+    ];
+
+    allowedFields.forEach(field => {
+      if (data.hasOwnProperty(field)) {
+        let value = data[field];
+        
+        // Nettoyer les chaînes
+        if (typeof value === 'string') {
+          value = value.trim();
+          
+          // Appliquer les limites de longueur
+          const limits = {
+            user_agent: 500,
+            referrer: 500,
+            country: 100,
+            city: 100,
+            device_type: 50,
+            browser: 100,
+            os: 100
+          };
+          
+          if (limits[field] && value.length > limits[field]) {
+            value = value.substring(0, limits[field]);
+          }
+        }
+        
+        // Nettoyer les valeurs null/undefined pour referrer
+        if (field === 'referrer' && (!value || value === '')) {
+          value = null;
+        }
+        
+        cleaned[field] = value;
+      }
+    });
+
+    return cleaned;
+  }
+
+  // Méthode POST améliorée avec nettoyage automatique
+  async postClean(endpoint, data, options = {}) {
+    const cleanedData = this.cleanDataForSending(data);
+    
+    console.log('Données nettoyées pour envoi:', {
+      original_fields: Object.keys(data).length,
+      cleaned_fields: Object.keys(cleanedData).length,
+      endpoint
+    });
+
+    return this.post(endpoint, cleanedData, options);
   }
 }
 

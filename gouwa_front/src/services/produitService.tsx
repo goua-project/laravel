@@ -80,6 +80,19 @@ class ProduitService {
     });
   }
 
+  static async getProductCount(storeId: string): Promise<number> {
+    try {
+      const response = await ApiService.request(`/stores/${storeId}/products/count`, {
+        method: 'GET'
+      });
+      
+      return response.count || 0;
+    } catch (error) {
+      console.error('Failed to get product count:', error);
+      return 0;
+    }
+  }
+
   async getProduitById(boutiqueId, produitId) {
     return this.apiService.request(`/boutiques/${boutiqueId}/produits/${produitId}`, {
       method: 'GET',

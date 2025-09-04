@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Check, Star, Zap, Building2, ArrowRight, ExternalLink } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import BoutiqueService from '../../services/BoutiqueService';
 import ProduitService from '../../services/produitService';
 import StatsService from '../../services/StatsService';
-  
 
 const Container = ({ children, className = "" }) => (
   <div className={`max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 ${className}`}>{children}</div>
@@ -27,106 +26,174 @@ const Button = ({ children, variant = "primary", className = "", icon, iconPosit
 };
 
 const FeaturedStores = () => {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState('physical');
   const [stores, setStores] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Fonction améliorée pour enregistrer une visite de boutique
-  const recordBoutiqueView = async (boutiqueSlug) => {
+  // NOUVELLE fonction d'enregistrement de vue FORCÉE
+  const recordBoutiqueViewForced = async (boutiqueSlug) => {
     try {
-      console.log(`🔄 Tentative d'enregistrement de vue pour: ${boutiqueSlug}`);
+      console.log(`[FORCE RECORD VIEW] Tentative d'enregistrement FORCÉ pour: ${boutiqueSlug}`);
       
-      // Utiliser la méthode avec retry et enregistrement asynchrone
-      const result = await StatsService.recordViewWithRetry(boutiqueSlug, 2);
+      if (!boutiqueSlug || typeof boutiqueSlug !== 'string') {
+        throw new Error('Slug de boutique invalide');
+      }
+
+      if (!StatsService || typeof StatsService.recordView !== 'function') {
+        throw new Error('Service de statistiques non disponible');
+      }
+
+      // Utiliser la nouvelle méthode d'enregistrement étendu
+      const result = await StatsService.recordViewExtended(boutiqueSlug, {
+        source: 'featured_stores_list',
+        click_context: 'store_card_button',
+        force_new_record: true,
+        timestamp_precise: Date.now(),
+        session_unique_id: `featured_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      });
       
       if (result && result.success) {
-        console.log(`✅ Vue enregistrée avec succès pour: ${boutiqueSlug}`);
+        if (result.data && result.data.view_recorded === true) {
+          console.log(`[FORCE RECORD VIEW] ✅ Vue EFFECTIVEMENT enregistrée pour: ${boutiqueSlug}`);
+          return { success: true, view_recorded: true, data: result };
+        } else {
+          console.warn(`[FORCE RECORD VIEW] ⚠️ Success mais view_recorded=false pour: ${boutiqueSlug}`);
+          // Essayer avec la méthode de retry
+          const retryResult = await StatsService.recordView(boutiqueSlug);
+          return retryResult;
+        }
       } else {
-        console.warn(`⚠️ Vue non enregistrée pour ${boutiqueSlug}:`, result?.error || 'Raison inconnue');
+        console.warn(`[FORCE RECORD VIEW] Échec pour ${boutiqueSlug}:`, result?.error || result?.message);
+        return { success: false, error: result?.error || result?.message || 'Échec inconnu' };
       }
       
-      return result;
-      
     } catch (error) {
-      console.error(`❌ Erreur lors de l'enregistrement de vue pour ${boutiqueSlug}:`, error);
-      
-      // Ne pas bloquer la navigation même si l'enregistrement échoue
+      console.error(`[FORCE RECORD VIEW] Erreur pour ${boutiqueSlug}:`, error.message);
       return { success: false, error: error.message };
     }
   };
 
-  // Fonction pour gérer le clic sur "Visiter la boutique" avec debounce
-  const handleVisitStore = async (e, storeSlug) => {
+  // NOUVELLE fonction de gestion du clic avec stratégies multiples
+  const handleVisitStoreAdvanced = async (e, storeSlug) => {
+    console.log(`[VISIT STORE ADVANCED] Navigation vers: ${storeSlug}`);
+    
+    // Navigation immédiate - l'utilisateur ne doit pas attendre
+    navigate(`/store/${storeSlug}`);
+    
+    // Stratégie d'enregistrement multiple (fire-and-forget)
+    Promise.resolve().then(async () => {
+      console.log(`[BACKGROUND RECORDING] Début enregistrement pour: ${storeSlug}`);
+      
+      // Stratégie 1: Enregistrement forcé avec données étendues
+      try {
+        const result1 = await recordBoutiqueViewForced(storeSlug);
+        if (result1.success && result1.view_recorded === true) {
+          console.log(`[STRATEGY 1] ✅ Enregistrement réussi pour: ${storeSlug}`);
+          return; // Succès, pas besoin d'essayer les autres stratégies
+        } else {
+          console.log(`[STRATEGY 1] ⚠️ Échec, essai stratégie 2 pour: ${storeSlug}`);
+        }
+      } catch (error) {
+        console.warn(`[STRATEGY 1] Erreur pour ${storeSlug}:`, error);
+      }
+      
+      // Stratégie 2: Enregistrement normal avec retry
+      try {
+        await new Promise(resolve => setTimeout(resolve, 500)); // Délai court
+        const result2 = await StatsService.recordView(storeSlug);
+        if (result2.success) {
+          console.log(`[STRATEGY 2] ✅ Enregistrement réussi pour: ${storeSlug}`);
+          return;
+        } else {
+          console.log(`[STRATEGY 2] ⚠️ Échec, essai stratégie 3 pour: ${storeSlug}`);
+        }
+      } catch (error) {
+        console.warn(`[STRATEGY 2] Erreur pour ${storeSlug}:`, error);
+      }
+      
+      // Stratégie 3: Enregistrement asynchrone comme fallback
+      try {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Délai plus long
+        StatsService.recordViewAsync(storeSlug); // Version async non-bloquante
+        console.log(`[STRATEGY 3] Enregistrement async lancé pour: ${storeSlug}`);
+      } catch (error) {
+        console.warn(`[STRATEGY 3] Erreur pour ${storeSlug}:`, error);
+      }
+      
+      console.log(`[BACKGROUND RECORDING] Fin des tentatives pour: ${storeSlug}`);
+    }).catch(error => {
+      console.warn(`[BACKGROUND RECORDING] Erreur globale pour ${storeSlug}:`, error);
+    });
+  };
+
+  // Fonction pour récupérer le nombre de vues réel
+  const getRealViewCount = async (boutiqueId) => {
     try {
-      // Enregistrer la visite de manière non-bloquante en arrière-plan
-      // On n'attend pas le résultat pour ne pas ralentir la navigation
-      StatsService.recordViewAsync(storeSlug);
+      if (!boutiqueId || boutiqueId <= 0) {
+        return 0;
+      }
+
+      if (!StatsService || typeof StatsService.getViewCount !== 'function') {
+        return 0;
+      }
+
+      const statsResult = await StatsService.getViewCount(boutiqueId);
       
-      console.log(`🚀 Navigation vers la boutique: ${storeSlug}`);
+      if (statsResult && statsResult.success) {
+        const count = statsResult.count || 0;
+        console.log(`[VIEW COUNT] Boutique ${boutiqueId}: ${count} vues`);
+        return count;
+      }
       
-      // La navigation se fera normalement via le Link
-      // Pas besoin de preventDefault() car on veut que la navigation se fasse
+      return 0;
       
     } catch (error) {
-      console.warn(`Erreur silencieuse lors de l'enregistrement de vue:`, error);
-      // Ne pas empêcher la navigation
+      console.error(`[VIEW COUNT] Erreur pour boutique ${boutiqueId}:`, error);
+      return 0;
     }
   };
 
-  // Fonction pour charger les boutiques et leurs produits avec les vraies statistiques
+  // Fonction pour charger les boutiques
   const loadStoresWithProducts = async () => {
     try {
       setLoading(true);
       setError(null);
-
-      console.log('🔄 Chargement des boutiques...');
-
+      
+      console.log('[LOAD STORES] Début du chargement des boutiques');
+      
       // Récupérer toutes les boutiques
       const boutiquesResponse = await BoutiqueService.getAllBoutiques();
       const boutiques = boutiquesResponse.data || boutiquesResponse;
-
+      
+      console.log(`[LOAD STORES] ${boutiques?.length || 0} boutiques récupérées`);
+      
       if (!Array.isArray(boutiques)) {
-        throw new Error('Format de données invalide pour les boutiques');
+        throw new Error(`Format de données invalide. Attendu: Array, Reçu: ${typeof boutiques}`);
       }
-
-      console.log(`📦 ${boutiques.length} boutiques récupérées`);
-
-      // Pour chaque boutique, récupérer ses produits et ses statistiques
+      
+      // Traiter chaque boutique en parallèle pour de meilleures performances
       const storesWithProducts = await Promise.all(
         boutiques.map(async (boutique) => {
           try {
-            console.log(`🏪 Traitement de la boutique: ${boutique.nom} (ID: ${boutique.id})`);
+            // Récupérer les produits (en parallèle avec les stats)
+            const [produitsResponse, realViewCount] = await Promise.allSettled([
+              ProduitService.getAllProduits(boutique.id).catch(() => ({ data: [] })),
+              getRealViewCount(boutique.id)
+            ]);
             
-            // Récupérer les produits avec gestion d'erreur
-            let produits = [];
-            try {
-              const produitsResponse = await ProduitService.getAllProduits(boutique.id);
-              produits = produitsResponse.data || produitsResponse || [];
-            } catch (produitError) {
-              console.warn(`⚠️ Erreur produits pour boutique ${boutique.id}:`, produitError.message);
-              // Continuer sans produits
-            }
-
-            // Récupérer les statistiques de visite avec fallback intelligent
-            let visitCount = Math.floor(Math.random() * 2000) + 800; // Valeur par défaut réaliste
+            // Traiter les produits
+            const produits = produitsResponse.status === 'fulfilled' 
+              ? (produitsResponse.value.data || produitsResponse.value || [])
+              : [];
             
-            try {
-              const statsResponse = await StatsService.getBoutiqueStats(boutique.id, 'month');
-              if (StatsService.hasValidStats(statsResponse)) {
-                visitCount = statsResponse.data.total_views;
-                console.log(`📊 Statistiques récupérées pour ${boutique.nom}: ${visitCount} vues`);
-              } else {
-                console.log(`📊 Statistiques par défaut pour ${boutique.nom}: ${visitCount} vues`);
-              }
-            } catch (statsError) {
-              console.log(`📊 Statistiques non disponibles pour ${boutique.nom}, utilisation valeur par défaut`);
-            }
-
-            // Convertir les produits au format React et prendre seulement les 3 premiers
+            const viewCount = realViewCount.status === 'fulfilled' ? realViewCount.value : 0;
+            
+            // Formater les produits
             const formattedProduits = Array.isArray(produits) 
               ? produits
-                  .filter(produit => produit && produit.visible !== false) // Filtrer les produits valides et visibles
+                  .filter(produit => produit && produit.visible !== false)
                   .slice(0, 3)
                   .map(produit => ({
                     id: produit.id,
@@ -134,30 +201,31 @@ const FeaturedStores = () => {
                     price: produit.prix || 0,
                     images: produit.images && produit.images.length > 0 
                       ? [ProduitService.getImageUrl(produit.images[0])]
-                      : ['https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=100'] // Image par défaut
+                      : ['https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=100']
                   }))
               : [];
-
-            // Générer ou récupérer le slug de manière sécurisée
+            
+            // Générer le slug
             const slug = boutique.slug || BoutiqueService.generateSlug(boutique.nom) || `boutique-${boutique.id}`;
-
+            
             return {
               id: boutique.id,
               name: boutique.nom || 'Boutique sans nom',
               slug: slug,
-              type: boutique.categorie || 'physical', // Par défaut physique
+              type: boutique.categorie || 'physical',
               logo: boutique.logo 
                 ? BoutiqueService.getLogoUrl(boutique.logo)
                 : 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
               slogan: boutique.slogan || 'Découvrez nos produits de qualité',
-              visitCount: visitCount,
-              products: formattedProduits
+              visitCount: viewCount,
+              products: formattedProduits,
+              status: boutique.status || 'active'
             };
             
           } catch (error) {
-            console.error(`❌ Erreur lors du traitement de la boutique ${boutique.id}:`, error);
+            console.error(`[LOAD STORES] Erreur boutique ${boutique.id}:`, error);
             
-            // Retourner une version minimale en cas d'erreur
+            // Version minimale en cas d'erreur
             return {
               id: boutique.id,
               name: boutique.nom || 'Boutique',
@@ -165,37 +233,94 @@ const FeaturedStores = () => {
               type: boutique.categorie || 'physical',
               logo: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400',
               slogan: 'Boutique en cours de configuration',
-              visitCount: Math.floor(Math.random() * 1000) + 200,
-              products: []
+              visitCount: 0,
+              products: [],
+              status: boutique.status || 'active'
             };
           }
         })
       );
-
-      // Filtrer les boutiques null et valider les données
-      const validStores = storesWithProducts.filter(store => 
-        store && store.id && store.name && store.slug
-      );
-
-      console.log(`✅ ${validStores.length} boutiques traitées avec succès`);
+      
+      // Filtrer les boutiques valides et actives
+      const validStores = storesWithProducts.filter(store => {
+        return store && store.id && store.name && store.slug && store.status === 'active';
+      });
+      
+      console.log(`[LOAD STORES] ${validStores.length} boutiques valides chargées`);
       setStores(validStores);
-
+      
     } catch (error) {
-      console.error('❌ Erreur globale lors du chargement des boutiques:', error);
+      console.error('[LOAD STORES] Erreur globale:', error);
       setError('Erreur lors du chargement des boutiques. Veuillez réessayer.');
     } finally {
       setLoading(false);
     }
   };
 
-  // Effect pour charger les données au montage du composant
+  // NOUVELLE fonction de test pour le développement avec debug complet
+  const testRecordViewComplete = async (slug) => {
+    console.log(`[TEST COMPLETE] Test complet pour: ${slug}`);
+    
+    try {
+      // Test de l'enregistrement forcé
+      const result1 = await recordBoutiqueViewForced(slug);
+      console.log('[TEST COMPLETE] Résultat enregistrement forcé:', result1);
+      
+      // Attendre un peu puis vérifier le compteur
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const store = stores.find(s => s.slug === slug);
+      if (store) {
+        const count = await getRealViewCount(store.id);
+        console.log('[TEST COMPLETE] Nouveau compteur après enregistrement:', count);
+        
+        // Mettre à jour l'affichage local
+        setStores(prevStores => 
+          prevStores.map(s => 
+            s.slug === slug ? { ...s, visitCount: count } : s
+          )
+        );
+      }
+      
+      return { success: true, result: result1 };
+      
+    } catch (error) {
+      console.error('[TEST COMPLETE] Erreur:', error);
+      return { success: false, error: error.message };
+    }
+  };
+
+  // Effect pour exposer les fonctions de test en développement
   useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      window.testRecordView = testRecordViewComplete;
+      window.debugBoutique = (slug) => {
+        const store = stores.find(s => s.slug === slug);
+        console.log('DEBUG BOUTIQUE:', { slug, store, stores: stores.length });
+        return store;
+      };
+      
+      return () => {
+        delete window.testRecordView;
+        delete window.debugBoutique;
+      };
+    }
+  }, [stores]);
+
+  // Effect pour charger les données au montage
+  useEffect(() => {
+    console.log('[MOUNT] Montage du composant FeaturedStores');
     loadStoresWithProducts();
+    
+    return () => {
+      console.log('[UNMOUNT] Démontage du composant FeaturedStores');
+    };
   }, []);
 
   // Filtrer les boutiques selon l'onglet actif
   const filteredStores = stores.filter(store => store.type === activeTab);
 
+  // Plans tarifaires
   const pricingPlans = [
     {
       id: 'gratuit',
@@ -260,11 +385,7 @@ const FeaturedStores = () => {
     }
   ];
 
-  const handleCreateStore = () => {
-    console.log('Navigation vers /create-store');
-  };
-
-  // État de chargement
+  // États de chargement et d'erreur
   if (loading) {
     return (
       <div className="bg-white">
@@ -273,7 +394,7 @@ const FeaturedStores = () => {
             <div className="text-center">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto"></div>
               <p className="mt-4 text-gray-600">Chargement des boutiques en cours...</p>
-              <p className="mt-2 text-sm text-gray-500">Cela peut prendre quelques secondes</p>
+              <p className="mt-2 text-sm text-gray-500">Récupération des statistiques réelles</p>
             </div>
           </Container>
         </section>
@@ -281,7 +402,6 @@ const FeaturedStores = () => {
     );
   }
 
-  // État d'erreur
   if (error) {
     return (
       <div className="bg-white">
@@ -295,7 +415,7 @@ const FeaturedStores = () => {
                   onClick={loadStoresWithProducts}
                   className="mr-3"
                 >
-                  🔄 Réessayer
+                  Réessayer
                 </Button>
                 <Button 
                   variant="outline" 
@@ -304,7 +424,7 @@ const FeaturedStores = () => {
                     setStores([]);
                   }}
                 >
-                  Continuer sans boutiques
+                  Continuer
                 </Button>
               </div>
             </div>
@@ -348,11 +468,18 @@ const FeaturedStores = () => {
                 Produits Digitaux ({stores.filter(s => s.type === 'digital').length})
               </button>
             </div>
+            
+            {/* Debug Info - Uniquement en développement */}
+            {process.env.NODE_ENV === 'development' && (
+              <div className="mt-4 text-xs text-gray-400">
+                Debug: testRecordView('slug-boutique') et debugBoutique('slug') disponibles
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {filteredStores.map((store) => (
-              <div key={store.id} className="group bg-white rounded-lg overflow-hidden shadow-md hover:shadow-xl transition-all duration-300">
+              <div key={store.id} className="group bg-white rounded-lg overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 border border-gray-100">
                 <div 
                   className="h-48 bg-gray-200 relative"
                   style={{
@@ -364,24 +491,24 @@ const FeaturedStores = () => {
                   <div className="absolute inset-0 bg-black bg-opacity-20 group-hover:bg-opacity-30 transition-all"></div>
                   <div className="absolute bottom-0 left-0 right-0 p-4">
                     <div className="bg-white text-black px-2 py-1 rounded text-xs font-medium inline-block">
-                      {store.type === 'physical' ? '🏪 Produits Physiques' : '💻 Produits Digitaux'}
+                      {store.type === 'physical' ? 'Produits Physiques' : 'Produits Digitaux'}
                     </div>
                   </div>
                 </div>
                 
                 <div className="p-6">
-                  <div className="flex justify-between items-start">
+                  <div className="flex justify-between items-start mb-2">
                     <h3 className="text-xl font-bold text-gray-900 group-hover:text-orange-500 transition-colors">
                       {store.name}
                     </h3>
-                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
-                      👁️ {StatsService.formatViewCount(store.visitCount)}
+                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full whitespace-nowrap">
+                      {StatsService.formatViewCount(store.visitCount)} vues
                     </span>
                   </div>
                   
-                  <p className="mt-2 text-sm text-gray-600 italic">"{store.slogan}"</p>
+                  <p className="text-sm text-gray-600 italic mb-4">"{store.slogan}"</p>
                   
-                  <div className="mt-4 space-y-4">
+                  <div className="space-y-3 mb-6">
                     {store.products.length > 0 ? (
                       store.products.map((product) => (
                         <div key={product.id} className="flex items-center space-x-3">
@@ -396,27 +523,26 @@ const FeaturedStores = () => {
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">{product.name}</p>
                           </div>
-                          <div className="text-sm font-medium text-gray-900">
+                          <div className="text-sm font-semibold text-gray-900">
                             {parseFloat(product.price).toLocaleString()} FCFA
                           </div>
                         </div>
                       ))
                     ) : (
                       <div className="text-center py-4">
-                        <p className="text-sm text-gray-500">🔄 Produits en cours d'ajout</p>
+                        <p className="text-sm text-gray-500">Produits en cours d'ajout</p>
                       </div>
                     )}
                   </div>
                   
-                  <div className="mt-6">
-                    <Link 
-                      to={`/store/${store.slug}`} 
-                      className="flex items-center justify-center w-full text-orange-500 hover:text-orange-600 font-medium transition-colors group-hover:bg-orange-50 py-2 rounded-lg"
-                      onClick={(e) => handleVisitStore(e, store.slug)}
+                  <div className="border-t pt-4">
+                    <button
+                      onClick={(e) => handleVisitStoreAdvanced(e, store.slug)}
+                      className="flex items-center justify-center w-full bg-orange-50 hover:bg-orange-100 text-orange-600 hover:text-orange-700 font-medium transition-all py-2 px-4 rounded-lg border border-orange-200 hover:border-orange-300"
                     >
                       Visiter la boutique
-                      <ExternalLink size={16} className="ml-1" />
-                    </Link>
+                      <ExternalLink size={16} className="ml-2" />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -424,12 +550,15 @@ const FeaturedStores = () => {
             
             {/* Empty State */}
             {filteredStores.length === 0 && (
-              <div className="col-span-full py-8 text-center">
-                <div className="bg-gray-50 rounded-lg p-8">
-                  <p className="text-gray-500 mb-4">
-                    🏪 Aucune boutique {activeTab === 'physical' ? 'physique' : 'digitale'} disponible pour le moment.
-                  </p>
-                  <p className="text-sm text-gray-400 mb-4">
+              <div className="col-span-full py-12 text-center">
+                <div className="bg-gray-50 rounded-lg p-8 max-w-md mx-auto">
+                  <div className="text-4xl mb-4">
+                    {activeTab === 'physical' ? '🏪' : '💻'}
+                  </div>
+                  <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                    Aucune boutique {activeTab === 'physical' ? 'physique' : 'digitale'} disponible
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
                     Soyez le premier à créer votre boutique dans cette catégorie !
                   </p>
                   <Link to="/create-store">
