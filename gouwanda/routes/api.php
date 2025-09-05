@@ -14,6 +14,9 @@ use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\Admin\AdminBoutiqueController;
 use App\Http\Controllers\Api\KaliaPayController;
 use App\Http\Controllers\Api\CommandeController;
+use App\Http\Controllers\Api\AdminCommandeController;
+use App\Http\Controllers\Api\AdminProduitController;
+use App\Http\Controllers\BoutiqueTrendsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -197,6 +200,7 @@ Route::prefix('admin')->middleware('auth:sanctum')->group(function () {
 
 
 Route::prefix('admin')->group(function () {
+     Route::get('boutiques/all-with-stats', [BoutiqueTrendsController::class, 'getAllBoutiquesWithStats']);
     Route::get('/boutiques', [AdminBoutiqueController::class, 'index']);
     Route::get('/boutiques/{id}', [AdminBoutiqueController::class, 'show']);
     Route::put('/boutiques/{id}', [AdminBoutiqueController::class, 'update']);
@@ -253,3 +257,101 @@ Route::prefix('webhooks')->name('webhooks.')->group(function () {
 
 // Callback public (sans auth)
 Route::post('paiement/kaliapay/callback', [KaliaPayController::class, 'handleKaliaPayCallback']);
+
+
+// Routes d'administration des commandes
+Route::prefix('admin')->group(function () {
+    Route::get('/commandes', [AdminCommandeController::class, 'index']);
+    Route::get('/commandes/{id}', [AdminCommandeController::class, 'show']);
+    Route::patch('/commandes/{id}/statut', [AdminCommandeController::class, 'updateStatus']);
+    Route::post('/commandes/{id}/annuler', [AdminCommandeController::class, 'annuler']);
+    Route::get('/commandes/statistiques', [AdminCommandeController::class, 'statistiques']);
+    Route::get('/commandes/exporter', [AdminCommandeController::class, 'exporter']);
+    Route::get('/commandes/search', [AdminCommandeController::class, 'search']);
+});
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    // Routes pour l'administration des produits
+    Route::prefix('admin')->group(function () {
+        Route::get('/produits', [AdminProduitController::class, 'index']);
+        Route::get('/produits/{id}', [AdminProduitController::class, 'show']);
+        // Ajoutez d'autres routes admin si nécessaire
+        Route::put('/produits/{id}', [AdminProduitController::class, 'update']);
+        Route::delete('/produits/{id}', [AdminProduitController::class, 'destroy']);
+    });
+});
+
+
+
+Route::prefix('boutiques')->group(function () {
+    // Routes pour les statistiques
+    Route::get('{boutiqueId}/views-stats', [BoutiqueTrendsController::class, 'getViewsStats']);
+    Route::get('{boutiqueId}/orders-stats', [BoutiqueTrendsController::class, 'getOrdersStats']);
+    Route::get('{boutiqueId}/detailed-views', [BoutiqueTrendsController::class, 'getDetailedViews']);
+    Route::get('{boutiqueId}/detailed-orders', [BoutiqueTrendsController::class, 'getDetailedOrders']);
+    Route::get('{boutiqueId}/top-products', [BoutiqueTrendsController::class, 'getTopProducts']);
+    Route::get('{boutiqueId}/payments-stats', [BoutiqueTrendsController::class, 'getPaymentsStats']);
+
+    // Routes pour les produits
+    Route::get('{boutiqueId}/products', [BoutiqueTrendsController::class, 'getBoutiqueProducts']);
+});
+
+
+
+Route::prefix('boutiques')->group(function () {
+    // Routes pour les statistiques
+    Route::get('{boutiqueId}/views-stats', [BoutiqueTrendsController::class, 'getViewsStats']);
+    Route::get('{boutiqueId}/orders-stats', [BoutiqueTrendsController::class, 'getOrdersStats']);
+    Route::get('{boutiqueId}/detailed-views', [BoutiqueTrendsController::class, 'getDetailedViews']);
+    Route::get('{boutiqueId}/detailed-orders', [BoutiqueTrendsController::class, 'getDetailedOrders']);
+    Route::get('{boutiqueId}/top-products', [BoutiqueTrendsController::class, 'getTopProducts']);
+    Route::get('{boutiqueId}/payments-stats', [BoutiqueTrendsController::class, 'getPaymentsStats']);
+
+    // Routes pour les produits
+    Route::get('{boutiqueId}/products', [BoutiqueTrendsController::class, 'getBoutiqueProducts']);
+});     
+
+
+
+
+Route::middleware(['auth:sanctum'])->group(function () {
+    
+    // Routes pour la gestion des commandes d'une boutique
+    Route::prefix('boutiques/{boutiqueId}')->group(function () {
+        
+        // Lister les commandes d'une boutique
+        Route::get('/commandes', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'listerCommandesBoutique'])
+            ->name('boutique.commandes.index');
+        
+        // Obtenir les statistiques d'une boutique
+        Route::get('/statistiques', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'obtenirStatistiquesBoutique'])
+            ->name('boutique.statistiques');
+        
+        // Obtenir les détails d'une commande spécifique
+        Route::get('/commandes/{commandeId}', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'obtenirDetailsCommande'])
+            ->name('boutique.commandes.show');
+        
+        // Mettre à jour le statut d'une commande
+        Route::patch('/commandes/{commandeId}/statut', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'mettreAJourStatutCommande'])
+            ->name('boutique.commandes.update-status');
+        
+        // Exporter les commandes en CSV
+        Route::get('/commandes/export', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'exporterCommandesCSV'])
+            ->name('boutique.commandes.export');
+        
+        // Obtenir les clients de la boutique
+        Route::get('/clients', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'obtenirClientsBoutique'])
+            ->name('boutique.clients.index');
+    });
+    
+    // Routes alternatives si vous préférez une structure différente
+    /*
+    Route::prefix('boutique-commandes')->group(function () {
+        Route::get('/{boutiqueId}', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'listerCommandesBoutique']);
+        Route::get('/{boutiqueId}/statistiques', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'obtenirStatistiquesBoutique']);
+        Route::get('/{boutiqueId}/clients', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'obtenirClientsBoutique']);
+        Route::patch('/{boutiqueId}/{commandeId}/statut', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'mettreAJourStatutCommande']);
+        Route::get('/{boutiqueId}/export', [App\Http\Controllers\Api\BoutiqueCommandeController::class, 'exporterCommandesCSV']);
+    });
+    */
+});

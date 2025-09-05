@@ -147,9 +147,8 @@ const DashboardSidebar: React.FC = () => {
     { icon: <LayoutDashboard size={20} />, label: 'Tableau de bord', path: '' },
     { icon: <Package size={20} />, label: 'Produits', path: '/products' },
     { icon: <ShoppingCart size={20} />, label: 'Commandes', path: '/orders' },
-    { icon: <CreditCard size={20} />, label: 'Paiements', path: '/payments' },
-    { icon: <BarChart2 size={20} />, label: 'Statistiques', path: '/stats' },
-    { icon: <Users size={20} />, label: 'Clients', path: '/customers' },
+   
+
     { icon: <Settings size={20} />, label: 'Paramètres', path: '/settings' },
   ];
 

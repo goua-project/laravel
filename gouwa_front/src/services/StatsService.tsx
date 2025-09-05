@@ -26,7 +26,8 @@ class StatsService {
       const response = await api.get(`/boutiques/stats/${boutiqueId}/dashboard`, {
         params: { period },
         includeAuth: false,
-        skipAuthToken: true
+        skipAuthToken: true,
+        noAuth: true // Option supplémentaire
       });
       
       if (response && response.success && response.data) {
@@ -47,7 +48,13 @@ class StatsService {
       return response || this.getEmptyDashboardStats();
       
     } catch (error) {
-      console.error('ERREUR getDashboardStats:', error.message);
+      console.warn('AVERTISSEMENT getDashboardStats:', error.message);
+      
+      // Si c'est une erreur d'authentification, retourner des données par défaut
+      if (this.isAuthError(error)) {
+        console.info('Statistiques non disponibles sans authentification - utilisation des valeurs par défaut');
+        return this.getEmptyDashboardStats();
+      }
       
       return {
         success: false,
@@ -55,6 +62,25 @@ class StatsService {
         data: this.getEmptyDashboardStats().data
       };
     }
+  }
+
+  /**
+   * Vérifier si l'erreur est liée à l'authentification
+   */
+  static isAuthError(error) {
+    if (!error) return false;
+    
+    const authIndicators = [
+      error.status === 401,
+      error.code === 401,
+      error.message?.includes('401'),
+      error.message?.includes('Unauthorized'),
+      error.message?.includes('Authentification requise'),
+      error.message?.toLowerCase().includes('auth'),
+      error.response?.status === 401
+    ];
+    
+    return authIndicators.some(indicator => indicator === true);
   }
 
   /**
@@ -82,7 +108,8 @@ class StatsService {
 
       const response = await api.get(`/boutiques/stats/${boutiqueId}/public/view-count`, {
         includeAuth: false,
-        skipAuthToken: true
+        skipAuthToken: true,
+        noAuth: true
       });
 
       let viewCount = 0;
@@ -97,7 +124,13 @@ class StatsService {
       return { success: true, count: viewCount };
 
     } catch (error) {
-      console.error('Erreur getViewCount:', error);
+      console.warn('Avertissement getViewCount:', error);
+      
+      // Si erreur d'auth, retourner un count de 0
+      if (this.isAuthError(error)) {
+        return { success: true, count: 0 };
+      }
+      
       return { 
         success: false, 
         count: 0, 
@@ -135,7 +168,8 @@ class StatsService {
 
       const response = await api.post(`/boutiques/views/record/${boutiqueSlug}`, viewData, {
         skipAuthToken: true,
-        includeAuth: false
+        includeAuth: false,
+        noAuth: true
       });
       
       if (response && response.success) {
@@ -162,7 +196,18 @@ class StatsService {
       };
       
     } catch (error) {
-      console.error('Erreur enregistrement vue:', error);
+      console.warn('Avertissement enregistrement vue:', error);
+      
+      // Si c'est une erreur d'auth, ne pas la traiter comme une erreur critique
+      if (this.isAuthError(error)) {
+        console.info('Enregistrement de vue non disponible sans authentification');
+        return { 
+          success: false, 
+          message: 'Authentification requise pour enregistrer les vues',
+          view_recorded: false
+        };
+      }
+      
       return { 
         success: false, 
         error: error.message || 'Erreur inconnue',
@@ -283,6 +328,52 @@ class StatsService {
         console.warn(`[ASYNC RECORD] Erreur pour ${boutiqueSlug}:`, error.message);
       }
     }, 100);
+  }
+
+  /**
+   * Version robuste qui essaie plusieurs endpoints
+   */
+  static async getDashboardStatsRobust(boutiqueId, period = 'month') {
+    const endpoints = [
+      `/boutiques/stats/${boutiqueId}/dashboard`,
+      `/boutiques/stats/${boutiqueId}/public/dashboard`,
+      `/boutiques/${boutiqueId}/stats/dashboard`,
+      `/public/boutiques/stats/${boutiqueId}/dashboard`
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`Tentative avec endpoint: ${endpoint}`);
+        
+        const response = await api.get(endpoint, {
+          params: { period },
+          includeAuth: false,
+          skipAuthToken: true,
+          noAuth: true,
+          timeout: 5000
+        });
+        
+        if (response && response.success && response.data) {
+          console.log(`✅ Succès avec endpoint: ${endpoint}`);
+          return {
+            success: true,
+            data: {
+              total_views: parseInt(response.data.total_views) || 0,
+              unique_views: parseInt(response.data.unique_views) || 0,
+              previous_views: parseInt(response.data.previous_views) || 0,
+              growth_rate: parseFloat(response.data.growth_rate) || 0
+            }
+          };
+        }
+      } catch (error) {
+        console.warn(`❌ Échec avec endpoint ${endpoint}:`, error.message);
+        continue; // Essayer l'endpoint suivant
+      }
+    }
+
+    // Tous les endpoints ont échoué
+    console.info('Aucun endpoint disponible - utilisation des valeurs par défaut');
+    return this.getEmptyDashboardStats();
   }
 
   /**

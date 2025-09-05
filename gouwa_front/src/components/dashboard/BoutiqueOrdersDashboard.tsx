@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext';
-import { useStore } from '../contexts/StoreContext';
-import DashboardSidebar from '../components/dashboard/DashboardSidebar';
-import DashboardOverview from '../components/dashboard/DashboardOverview';
-import ProductsList from '../components/dashboard/ProductsList';
-
-import BoutiqueCommandeService from '../services/BoutiqueCommandeService';
+import { useStore } from '../../contexts/StoreContext';
+import CommandeApiService from '../../services/commandeApiService';
 import { 
   Package, 
   ShoppingCart, 
@@ -32,58 +26,6 @@ import {
   DollarSign
 } from 'lucide-react';
 
-const DashboardPage = () => {
-  const { isAuthenticated, isLoading } = useAuth();
-  const { currentStore } = useStore();
-  
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-  
-  if (!isAuthenticated) {
-    return <Navigate to="/auth/login?redirect=dashboard" replace />;
-  }
-  
-  return (
-    <div className="min-h-screen bg-gray-50 flex">
-      <DashboardSidebar />
-      
-      <div className="flex-1 overflow-auto p-6">
-        <Routes>
-          <Route path="/" element={<DashboardOverview />} />
-          <Route path="/products" element={<ProductsList />} />
-          <Route path="/orders" element={<BoutiqueOrdersDashboard />} />
-          <Route path="/payments" element={<ComingSoonPlaceholder title="Paiements" />} />
-          <Route path="/stats" element={<ComingSoonPlaceholder title="Statistiques" />} />
-          <Route path="/customers" element={<ComingSoonPlaceholder title="Clients" />} />
-          <Route path="/settings" element={<ComingSoonPlaceholder title="Paramètres" />} />
-          <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
-      </div>
-    </div>
-  );
-};
-
-// Placeholder component for sections not yet implemented
-const ComingSoonPlaceholder = ({ title }) => {
-  return (
-    <div className="bg-white rounded-lg shadow-sm p-8 text-center">
-      <h2 className="text-2xl font-bold text-gray-800 mb-2">{title}</h2>
-      <div className="bg-orange-100 text-orange-800 inline-block px-3 py-1 rounded-full text-sm font-medium mb-4">
-        Bientôt disponible
-      </div>
-      <p className="text-gray-600 max-w-md mx-auto">
-        Cette section est en cours de développement et sera bientôt disponible.
-      </p>
-    </div>
-  );
-};
-
-// Composant BoutiqueOrdersDashboard intégré
 const BoutiqueOrdersDashboard = () => {
   const { currentStore } = useStore();
   const [activeTab, setActiveTab] = useState('commandes');
@@ -118,7 +60,7 @@ const BoutiqueOrdersDashboard = () => {
     
     try {
       // Charger les commandes de la boutique
-      const commandesResult = await BoutiqueCommandeService.listerCommandesBoutique(
+      const commandesResult = await CommandeApiService.listerCommandesBoutique(
         currentStore.id, 
         { ...filters, page: currentPage }
       );
@@ -154,7 +96,7 @@ const BoutiqueOrdersDashboard = () => {
       }
 
       // Charger les statistiques
-      const statsResult = await BoutiqueCommandeService.obtenirStatistiquesBoutique(currentStore.id);
+      const statsResult = await CommandeApiService.obtenirStatistiquesBoutique(currentStore.id);
       if (statsResult.success) {
         setStatistics(statsResult.data);
       }
@@ -168,7 +110,7 @@ const BoutiqueOrdersDashboard = () => {
   };
 
   const formatMontant = (montant) => {
-    return BoutiqueCommandeService.formaterMontant(montant);
+    return CommandeApiService.formaterMontant(montant);
   };
 
   const formatDate = (dateString) => {
@@ -182,7 +124,7 @@ const BoutiqueOrdersDashboard = () => {
   };
 
   const getStatutColor = (statut) => {
-    return `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${BoutiqueCommandeService.getCouleurStatut(statut)}`;
+    return `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${CommandeApiService.getCouleurStatut(statut)}`;
   };
 
   const getStatutIcon = (statut) => {
@@ -213,49 +155,6 @@ const BoutiqueOrdersDashboard = () => {
       search: ''
     });
     setCurrentPage(1);
-  };
-
-  const handleUpdateStatus = async (commandeId, nouveauStatut) => {
-    try {
-      const result = await BoutiqueCommandeService.mettreAJourStatutCommande(
-        currentStore.id, 
-        commandeId, 
-        nouveauStatut
-      );
-      
-      if (result.success) {
-        // Mettre à jour la commande dans la liste
-        setCommandes(prev => prev.map(c => 
-          c.id === commandeId ? { ...c, statut: nouveauStatut } : c
-        ));
-        
-        // Si la commande sélectionnée est celle mise à jour, la mettre à jour aussi
-        if (selectedCommande && selectedCommande.id === commandeId) {
-          setSelectedCommande({ ...selectedCommande, statut: nouveauStatut });
-        }
-        
-        return { success: true, message: result.message };
-      } else {
-        return { success: false, message: result.message };
-      }
-    } catch (error) {
-      console.error('Erreur lors de la mise à jour du statut:', error);
-      return { success: false, message: error.message };
-    }
-  };
-
-  const handleExportCSV = async () => {
-    try {
-      const result = await BoutiqueCommandeService.exporterCommandesCSV(currentStore.id, filters);
-      if (result.success) {
-        return { success: true, message: result.message };
-      } else {
-        return { success: false, message: result.message };
-      }
-    } catch (error) {
-      console.error('Erreur lors de l\'export CSV:', error);
-      return { success: false, message: error.message };
-    }
   };
 
   if (!currentStore) {
@@ -363,23 +262,14 @@ const BoutiqueOrdersDashboard = () => {
     <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-lg font-medium text-gray-900">Filtres</h3>
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={handleExportCSV}
-            className="flex items-center px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
-          >
-            <Download size={16} className="mr-2" />
-            Exporter CSV
-          </button>
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className="flex items-center text-sm text-gray-600 hover:text-gray-900"
-          >
-            <Filter size={16} className="mr-2" />
-            {showFilters ? 'Masquer' : 'Afficher'} les filtres
-            <ChevronDown size={16} className={`ml-1 transform ${showFilters ? 'rotate-180' : ''}`} />
-          </button>
-        </div>
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center text-sm text-gray-600 hover:text-gray-900"
+        >
+          <Filter size={16} className="mr-2" />
+          {showFilters ? 'Masquer' : 'Afficher'} les filtres
+          <ChevronDown size={16} className={`ml-1 transform ${showFilters ? 'rotate-180' : ''}`} />
+        </button>
       </div>
 
       {showFilters && (
@@ -446,18 +336,6 @@ const BoutiqueOrdersDashboard = () => {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Date fin
-            </label>
-            <input
-              type="date"
-              value={filters.date_fin}
-              onChange={(e) => handleFilterChange('date_fin', e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm"
-            />
-          </div>
-
           <div className="flex items-end">
             <button
               onClick={resetFilters}
@@ -491,7 +369,7 @@ const BoutiqueOrdersDashboard = () => {
                 </div>
                 <span className={getStatutColor(commande.statut)}>
                   {getStatutIcon(commande.statut)}
-                  <span className="ml-1">{BoutiqueCommandeService.getLibelleStatut(commande.statut)}</span>
+                  <span className="ml-1">{CommandeApiService.getLibelleStatut(commande.statut)}</span>
                 </span>
               </div>
               <div className="text-right">
@@ -521,7 +399,7 @@ const BoutiqueOrdersDashboard = () => {
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex items-center">
                     <CreditCard size={14} className="mr-2" />
-                    {BoutiqueCommandeService.getLibelleMethodePaiement(commande.methode_paiement)}
+                    {CommandeApiService.getLibelleMethodePaiement(commande.methode_paiement)}
                   </div>
                   {commande.user?.telephone && (
                     <div className="flex items-center">
@@ -560,31 +438,13 @@ const BoutiqueOrdersDashboard = () => {
                   <span className="text-xs text-gray-500 italic">Note: {commande.notes}</span>
                 )}
               </div>
-              <div className="flex items-center space-x-2">
-                {commande.statut === 'en_attente' && (
-                  <button
-                    onClick={() => handleUpdateStatus(commande.id, 'en_cours')}
-                    className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
-                  >
-                    Commencer traitement
-                  </button>
-                )}
-                {commande.statut === 'en_cours' && (
-                  <button
-                    onClick={() => handleUpdateStatus(commande.id, 'livree')}
-                    className="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700"
-                  >
-                    Marquer comme livrée
-                  </button>
-                )}
-                <button
-                  onClick={() => setSelectedCommande(commande)}
-                  className="flex items-center text-sm text-orange-600 hover:text-orange-800"
-                >
-                  <Eye size={16} className="mr-1" />
-                  Voir détails
-                </button>
-              </div>
+              <button
+                onClick={() => setSelectedCommande(commande)}
+                className="flex items-center text-sm text-orange-600 hover:text-orange-800"
+              >
+                <Eye size={16} className="mr-1" />
+                Voir détails
+              </button>
             </div>
           </div>
         ))
@@ -706,7 +566,7 @@ const BoutiqueOrdersDashboard = () => {
                       {paiement.statut}
                     </span>
                     <div className="text-sm text-gray-600 mt-1">
-                      {BoutiqueCommandeService.getLibelleMethodePaiement(paiement.methode)}
+                      {CommandeApiService.getLibelleMethodePaiement(paiement.methode)}
                     </div>
                   </div>
                 </div>
@@ -821,10 +681,10 @@ const BoutiqueOrdersDashboard = () => {
                     <div className="space-y-2 text-sm">
                       <p><strong>Statut:</strong> 
                         <span className={getStatutColor(selectedCommande.statut) + ' ml-2'}>
-                          {BoutiqueCommandeService.getLibelleStatut(selectedCommande.statut)}
+                          {CommandeApiService.getLibelleStatut(selectedCommande.statut)}
                         </span>
                       </p>
-                      <p><strong>Paiement:</strong> {BoutiqueCommandeService.getLibelleMethodePaiement(selectedCommande.methode_paiement)}</p>
+                      <p><strong>Paiement:</strong> {CommandeApiService.getLibelleMethodePaiement(selectedCommande.methode_paiement)}</p>
                       <p><strong>Date:</strong> {formatDate(selectedCommande.created_at)}</p>
                       <p><strong>Montant:</strong> {formatMontant(selectedCommande.montant_total)}</p>
                     </div>
@@ -899,7 +759,7 @@ const BoutiqueOrdersDashboard = () => {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                         <div>
                           <p><strong>Référence:</strong> {selectedCommande.paiement.reference}</p>
-                          <p><strong>Méthode:</strong> {BoutiqueCommandeService.getLibelleMethodePaiement(selectedCommande.paiement.methode)}</p>
+                          <p><strong>Méthode:</strong> {CommandeApiService.getLibelleMethodePaiement(selectedCommande.paiement.methode)}</p>
                         </div>
                         <div>
                           <p><strong>Statut:</strong> 
@@ -926,4 +786,4 @@ const BoutiqueOrdersDashboard = () => {
   );
 };
 
-export default DashboardPage;
+export default BoutiqueOrdersDashboard;

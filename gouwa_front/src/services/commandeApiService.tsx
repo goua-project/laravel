@@ -58,27 +58,26 @@ apiClient.interceptors.response.use(
 
 // Service principal pour les commandes
 class CommandeApiService {
-  
   // ====== GESTION DES COMMANDES ======
 
   /**
    * Créer une nouvelle commande - URL corrigée pour Laravel
    */
-  static async creerCommande(commandeData) {
+  static async creerCommande(commandeData: any) {
     try {
       // Validation des données avant envoi
       const validation = this.validerDonneesCommande(commandeData);
       if (!validation.isValid) {
         return {
           success: false,
-          message: 'Données de commande invalides',
+          message: "Données de commande invalides",
           errors: validation.errors,
         };
       }
 
       // Utiliser l'endpoint Laravel correct
-      const response = await apiClient.post('/commandes', commandeData);
-      
+      const response = await apiClient.post("/commandes", commandeData);
+
       return {
         success: true,
         data: response.data,
@@ -86,6 +85,13 @@ class CommandeApiService {
     } catch (error) {
       return this.handleApiError(error);
     }
+  }
+
+  /**
+   * Obtenir l'instance de l'API client
+   */
+  static getApiClient() {
+    return apiClient;
   }
 
   /**

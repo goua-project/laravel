@@ -22,18 +22,15 @@ import ProtectedAdminRoute from './components/common/ProtectedAdminRoute';
 import { ToastProvider } from './components/ui/Toast';
 
 // Import des pages d'administration
-
-import {Shops} from './pages/Shops';
-
-
-
-
-
+import { Shops } from './pages/Shops';
 import { UsersPage } from './pages/UsersPage';
-
 import { TrendingShops as TrendingShopsPage } from './pages/TrendingShops';  
-import { Orders as OrdersPage } from './pages/Orders';
+import { Products } from './pages/Products';
+
 import { EnhancedAnalytics as ReportsPage } from './pages/EnhancedAnalytics';
+
+// Import du composant AdminOrders mis à jour
+import { AdminOrders } from './pages/Orders';
 
 function App() {
   return (
@@ -84,17 +81,16 @@ function App() {
                         
                         {/* Gestion des utilisateurs */}
                         <Route path="users" element={<UsersPage />} />
-
-
                         
                         {/* Gestion des boutiques */}
                         <Route path="shops" element={<Shops />} />
                         
-                        {/* Gestion des produits */}
                         
+                         {/* Gestion des produits */}
+                        <Route path="products" element={<Products />} />
                         
-                        {/* Gestion des commandes */}
-                        <Route path="orders" element={<OrdersPage />} />
+                        {/* Gestion des commandes - Utilise le nouveau composant AdminOrders */}
+                        <Route path="orders" element={<AdminOrders />} />
                         
                         {/* Rapports et statistiques */}
                         <Route path="reports" element={<ReportsPage />} />

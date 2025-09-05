@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../../contexts/StoreContext';
 import BoutiqueService from '../../services/BoutiqueService';
+import BoutiqueCommandeService from '../../services/BoutiqueCommandeService';
 import ProduitService from '../../services/produitService';
 import StatsService from '../../services/StatsService';
 import SubscriptionService from '../../services/SubscriptionService';
@@ -44,7 +45,16 @@ const DashboardOverview = () => {
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsError, setStatsError] = useState(null);
   
-  
+  // États pour les statistiques de commandes
+  const [ordersStats, setOrdersStats] = useState({
+    total_orders: 0,
+    total_revenue: 0,
+    orders_growth: 0,
+    revenue_growth: 0
+  });
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersError, setOrdersError] = useState(null);
+
 // Remplacez la fonction fetchSubscriptionInfo par :
 const fetchSubscriptionInfo = async () => {
   try {
@@ -61,67 +71,50 @@ const fetchSubscriptionInfo = async () => {
   }
 };
 
-  // Fonction pour récupérer les statistiques de vues avec gestion d'erreur améliorée
-  const fetchViewsStats = async (boutiqueId, period = 'month', isRefresh = false) => {
-    if (!boutiqueId || boutiqueId <= 0) {
-      console.warn('ID de boutique invalide pour les statistiques:', boutiqueId);
-      return;
-    }
+// Fonction pour récupérer les statistiques de vues avec gestion d'erreur améliorée
+const fetchViewsStats = async (boutiqueId, period = 'month', isRefresh = false) => {
+  if (!boutiqueId || boutiqueId <= 0) {
+    console.warn('ID de boutique invalide pour les statistiques:', boutiqueId);
+    return;
+  }
 
-    try {
-      if (!isRefresh) {
-        setStatsLoading(true);
+  try {
+    if (!isRefresh) {
+      setStatsLoading(true);
+    }
+    setStatsError(null);
+    
+    console.log('Récupération des statistiques de vues pour la boutique:', boutiqueId, 'période:', period);
+    
+    // Utiliser le service de statistiques
+    const response = await StatsService.getDashboardStats(boutiqueId, period);
+    
+    console.log('Réponse des statistiques:', response);
+    
+    if (response.success && response.data) {
+      const statsData = {
+        total_views: parseInt(response.data.total_views) || 0,
+        unique_views: parseInt(response.data.unique_views) || 0,
+        previous_views: parseInt(response.data.previous_views) || 0,
+        growth_rate: parseFloat(response.data.growth_rate) || 0
+      };
+      
+      console.log('Statistiques formatées:', statsData);
+      setViewsStats(statsData);
+      
+      // Mettre à jour le store avec les nouvelles données
+      if (currentStore) {
+        setCurrentStore(prev => ({
+          ...prev,
+          visitCount: statsData.total_views,
+          previousVisits: statsData.previous_views,
+          visitsGrowth: statsData.growth_rate,
+          uniqueVisits: statsData.unique_views
+        }));
       }
-      setStatsError(null);
-      
-      console.log('Récupération des statistiques de vues pour la boutique:', boutiqueId, 'période:', period);
-      
-      // Utiliser le service de statistiques
-      const response = await StatsService.getDashboardStats(boutiqueId, period);
-      
-      console.log('Réponse des statistiques:', response);
-      
-      if (response.success && response.data) {
-        const statsData = {
-          total_views: parseInt(response.data.total_views) || 0,
-          unique_views: parseInt(response.data.unique_views) || 0,
-          previous_views: parseInt(response.data.previous_views) || 0,
-          growth_rate: parseFloat(response.data.growth_rate) || 0
-        };
-        
-        console.log('Statistiques formatées:', statsData);
-        setViewsStats(statsData);
-        
-        // Mettre à jour le store avec les nouvelles données
-        if (currentStore) {
-          setCurrentStore(prev => ({
-            ...prev,
-            visitCount: statsData.total_views,
-            previousVisits: statsData.previous_views,
-            visitsGrowth: statsData.growth_rate,
-            uniqueVisits: statsData.unique_views
-          }));
-        }
-      } else if (response.requireAuth) {
-        // Problème d'authentification
-        setStatsError('Session expirée, veuillez vous reconnecter');
-        console.warn('Problème d\'authentification pour les statistiques');
-      } else {
-        // Aucune donnée disponible, utiliser des valeurs par défaut
-        console.warn('Aucune donnée de statistiques récupérée, utilisation des valeurs par défaut');
-        const defaultStats = {
-          total_views: 0,
-          unique_views: 0,
-          previous_views: 0,
-          growth_rate: 0
-        };
-        setViewsStats(defaultStats);
-      }
-    } catch (error) {
-      console.error('Erreur lors de la récupération des statistiques de vues:', error);
-      setStatsError(error.message || 'Erreur lors du chargement des statistiques');
-      
-      // En cas d'erreur, utiliser des valeurs par défaut
+    } else {
+      // Aucune donnée disponible ou erreur d'authentification - utiliser des valeurs par défaut
+      console.warn('Aucune donnée de statistiques récupérée ou problème d\'authentification, utilisation des valeurs par défaut');
       const defaultStats = {
         total_views: 0,
         unique_views: 0,
@@ -129,9 +122,105 @@ const fetchSubscriptionInfo = async () => {
         growth_rate: 0
       };
       setViewsStats(defaultStats);
+      
+      // Ne pas afficher d'erreur d'authentification
+      if (response.requireAuth) {
+        console.info('Statistiques non disponibles - authentification requise côté API');
+      }
+    }
+  } catch (error) {
+    console.error('Erreur lors de la récupération des statistiques de vues:', error);
+    
+    // Si c'est une erreur 401, ne pas l'afficher comme erreur utilisateur
+    if (error.status === 401 || error.message?.includes('401') || error.message?.includes('Unauthorized')) {
+      console.info('Statistiques non disponibles - authentification requise côté API');
+      setStatsError(null); // Ne pas afficher d'erreur
+    } else {
+      setStatsError(error.message || 'Erreur lors du chargement des statistiques');
+    }
+    
+    // En cas d'erreur, utiliser des valeurs par défaut
+    const defaultStats = {
+      total_views: 0,
+      unique_views: 0,
+      previous_views: 0,
+      growth_rate: 0
+    };
+    setViewsStats(defaultStats);
+  } finally {
+    if (!isRefresh) {
+      setStatsLoading(false);
+    }
+  }
+};
+
+  // Fonction pour récupérer les statistiques de commandes
+  const fetchOrdersStats = async (boutiqueId, period = 'month', isRefresh = false) => {
+    if (!boutiqueId || boutiqueId <= 0) {
+      console.warn('ID de boutique invalide pour les statistiques de commandes:', boutiqueId);
+      return;
+    }
+
+    try {
+      if (!isRefresh) {
+        setOrdersLoading(true);
+      }
+      setOrdersError(null);
+      
+      console.log('Récupération des statistiques de commandes pour la boutique:', boutiqueId);
+      
+      // Utiliser BoutiqueCommandeService pour récupérer les statistiques
+      const response = await BoutiqueCommandeService.obtenirStatistiquesBoutique(boutiqueId);
+      
+      console.log('Réponse des statistiques de commandes:', response);
+      
+      if (response.success && response.data) {
+        const statsData = {
+          total_orders: parseInt(response.data.total_commandes) || 0,
+          total_revenue: parseFloat(response.data.chiffre_affaires) || 0,
+          orders_growth: parseFloat(response.data.croissance_commandes) || 0,
+          revenue_growth: parseFloat(response.data.croissance_chiffre_affaires) || 0
+        };
+        
+        console.log('Statistiques de commandes formatées:', statsData);
+        setOrdersStats(statsData);
+        
+        // Mettre à jour le store avec les nouvelles données
+        if (currentStore) {
+          setCurrentStore(prev => ({
+            ...prev,
+            orderCount: statsData.total_orders,
+            totalRevenue: statsData.total_revenue,
+            ordersGrowth: statsData.orders_growth,
+            revenueGrowth: statsData.revenue_growth
+          }));
+        }
+      } else {
+        // Aucune donnée disponible, utiliser des valeurs par défaut
+        console.warn('Aucune donnée de commandes récupérée, utilisation des valeurs par défaut');
+        const defaultStats = {
+          total_orders: 0,
+          total_revenue: 0,
+          orders_growth: 0,
+          revenue_growth: 0
+        };
+        setOrdersStats(defaultStats);
+      }
+    } catch (error) {
+      console.error('Erreur lors de la récupération des statistiques de commandes:', error);
+      setOrdersError(error.message || 'Erreur lors du chargement des statistiques de commandes');
+      
+      // En cas d'erreur, utiliser des valeurs par défaut
+      const defaultStats = {
+        total_orders: 0,
+        total_revenue: 0,
+        orders_growth: 0,
+        revenue_growth: 0
+      };
+      setOrdersStats(defaultStats);
     } finally {
       if (!isRefresh) {
-        setStatsLoading(false);
+        setOrdersLoading(false);
       }
     }
   };
@@ -201,6 +290,9 @@ const fetchSubscriptionInfo = async () => {
         
         // Charger les statistiques de vues réelles
         await fetchViewsStats(transformedBoutique.id, timeRange);
+        
+        // Charger les statistiques de commandes
+        await fetchOrdersStats(transformedBoutique.id);
         
         // Charger les informations d'abonnement
         await fetchSubscriptionInfo();
@@ -272,6 +364,11 @@ const fetchSubscriptionInfo = async () => {
       await fetchViewsStats(currentStore.id, timeRange, true);
     }
     
+    // Actualiser spécifiquement les statistiques de commandes
+    if (currentStore && currentStore.id) {
+      await fetchOrdersStats(currentStore.id, timeRange, true);
+    }
+    
     setRefreshing(false);
   };
 
@@ -279,6 +376,13 @@ const fetchSubscriptionInfo = async () => {
   const handleStatsRefresh = async () => {
     if (currentStore && currentStore.id) {
       await fetchViewsStats(currentStore.id, timeRange, true);
+    }
+  };
+
+  // Fonction pour actualiser uniquement les statistiques de commandes
+  const handleOrdersStatsRefresh = async () => {
+    if (currentStore && currentStore.id) {
+      await fetchOrdersStats(currentStore.id, timeRange, true);
     }
   };
 
@@ -291,58 +395,51 @@ const fetchSubscriptionInfo = async () => {
     const uniqueViews = viewsStats.unique_views;
     const visitsGrowth = viewsStats.growth_rate;
 
-    // Calculer les revenus en fonction de la plage de temps
-    const getRevenueForPeriod = () => {
-      switch (timeRange) {
-        case 'today':
-          return currentStore.dailyRevenue || 0;
-        case 'week':
-          return currentStore.weeklyRevenue || 0;
-        case 'month':
-          return currentStore.monthlyRevenue || 0;
-        case 'year':
-          return currentStore.yearlyRevenue || currentStore.totalRevenue || 0;
-        default:
-          return currentStore.monthlyRevenue || 0;
-      }
-    };
+    // Utiliser les vraies données de commandes depuis ordersStats
+    const currentOrders = ordersStats.total_orders;
+    const currentRevenue = ordersStats.total_revenue;
+    const ordersGrowth = ordersStats.orders_growth;
+    const revenueGrowth = ordersStats.revenue_growth;
 
-    // Calculer les commandes en fonction de la plage de temps
-    const getOrdersForPeriod = () => {
-      switch (timeRange) {
-        case 'today':
-          return currentStore.dailyOrders || 0;
-        case 'week':
-          return currentStore.weeklyOrders || 0;
-        case 'month':
-          return currentStore.monthlyOrders || 0;
-        case 'year':
-          return currentStore.yearlyOrders || currentStore.orderCount || 0;
-        default:
-          return currentStore.monthlyOrders || 0;
-      }
-    };
-
-    const currentRevenue = getRevenueForPeriod();
-    const currentOrders = getOrdersForPeriod();
-    
     // Calculer le taux de conversion (commandes / visites * 100)
     const conversionRate = currentViews > 0 ? ((currentOrders / currentViews) * 100).toFixed(1) : 0;
 
     return [
       {
         name: 'Ventes',
-        value: `${currentRevenue.toLocaleString()} FCFA`,
-        change: currentStore.revenueGrowth ? `${currentStore.revenueGrowth > 0 ? '+' : ''}${currentStore.revenueGrowth}%` : '+0%',
-        positive: !currentStore.revenueGrowth || currentStore.revenueGrowth >= 0,
+        value: `${BoutiqueCommandeService.formaterMontant(currentRevenue)}`,
+        change: revenueGrowth ? `${revenueGrowth > 0 ? '+' : ''}${revenueGrowth}%` : '+0%',
+        positive: !revenueGrowth || revenueGrowth >= 0,
         icon: <DollarSign size={24} className="text-green-500" />,
+        loading: ordersLoading,
+        error: ordersError,
+        onRefresh: handleOrdersStatsRefresh
       },
       {
         name: 'Commandes',
-        value: currentOrders.toString(),
-        change: currentStore.ordersGrowth ? `${currentStore.ordersGrowth > 0 ? '+' : ''}${currentStore.ordersGrowth}%` : '+0%',
-        positive: !currentStore.ordersGrowth || currentStore.ordersGrowth >= 0,
+        value: ordersLoading ? (
+          <div className="flex items-center">
+            <Loader2 size={16} className="animate-spin mr-1" />
+            <span className="text-sm">Chargement...</span>
+          </div>
+        ) : (
+          <div className="flex items-center">
+            <span>{currentOrders.toLocaleString()}</span>
+            {ordersError && (
+              <button 
+                onClick={handleOrdersStatsRefresh}
+                className="ml-2 text-red-500 hover:text-red-600"
+                title="Réessayer"
+              >
+                <RefreshCw size={14} />
+              </button>
+            )}
+          </div>
+        ),
+        change: ordersLoading ? '...' : `${ordersGrowth > 0 ? '+' : ''}${ordersGrowth}%`,
+        positive: !ordersLoading && ordersGrowth >= 0,
         icon: <ShoppingBag size={24} className="text-blue-500" />,
+        error: ordersError
       },
       {
         name: 'Visites',
@@ -373,14 +470,14 @@ const fetchSubscriptionInfo = async () => {
       },
       {
         name: 'Taux de conversion',
-        value: statsLoading ? (
+        value: statsLoading || ordersLoading ? (
           <div className="flex items-center">
             <Loader2 size={16} className="animate-spin mr-1" />
             <span className="text-sm">...</span>
           </div>
         ) : `${conversionRate}%`,
-        change: currentStore.conversionGrowth ? `${currentStore.conversionGrowth > 0 ? '+' : ''}${currentStore.conversionGrowth}%` : '+0%',
-        positive: !currentStore.conversionGrowth || currentStore.conversionGrowth >= 0,
+        change: '+0%', // À adapter si vous avez ces données
+        positive: true,
         icon: <TrendingUp size={24} className="text-orange-500" />,
       },
     ];
@@ -400,7 +497,7 @@ const fetchSubscriptionInfo = async () => {
     return ProduitService.getImageUrl(firstImage);
   };
 
-  // Composant pour afficher les informations d'abonnement
+  // Composant pour affiler les informations d'abonnement
   const SubscriptionBadge = () => {
     if (subscriptionLoading) {
       return (
@@ -587,6 +684,30 @@ const fetchSubscriptionInfo = async () => {
             </div>
           </div>
         )}
+
+        {/* Alerte d'erreur pour les statistiques de commandes */}
+        {ordersError && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4">
+            <div className="flex items-center">
+              <div className="flex-shrink-0">
+                <AlertCircle className="h-5 w-5 text-yellow-400" />
+              </div>
+              <div className="ml-3 flex-1">
+                <p className="text-sm text-yellow-700">
+                  <span className="font-medium">Problème de commandes :</span> {ordersError}
+                </p>
+              </div>
+              <div className="ml-4 flex-shrink-0">
+                <button 
+                  onClick={handleOrdersStatsRefresh}
+                  className="text-yellow-600 hover:text-yellow-800 text-sm font-medium"
+                >
+                  Réessayer
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Filters */}
         <div className="border-b border-gray-200 px-6 py-2 bg-gray-50 flex justify-between items-center">
@@ -596,7 +717,7 @@ const fetchSubscriptionInfo = async () => {
               <button
                 key={range}
                 onClick={() => setTimeRange(range)}
-                disabled={statsLoading}
+                disabled={statsLoading || ordersLoading}
                 className={`px-3 py-1 text-xs font-medium transition-colors disabled:opacity-50 ${
                   timeRange === range
                     ? 'bg-orange-500 text-white'
