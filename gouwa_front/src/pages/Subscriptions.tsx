@@ -4,8 +4,44 @@ import { Input } from '../components/ui/Input';
 import { Table } from '../components/ui/Table';
 import { Modal } from '../components/ui/Modal';
 import { useToast } from '../components/ui/Toast';
-import { subscriptionsAPI, SubscriptionPlan, UserSubscription } from '../services/api';
-import { Search, Plus, Edit, Trash2, Crown, Users, Calendar, DollarSign, Package, Star } from 'lucide-react';
+import AdminSubscriptionService from '../services/AdminSubscriptionService';
+import { Search, Plus, Edit, Trash2, Crown, Users, Calendar, DollarSign, Package, Star, AlertCircle, XCircle, CheckCircle, RefreshCw } from 'lucide-react';
+
+// Interface pour les types de données
+interface SubscriptionPlan {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  price: number;
+  duration_months?: number;
+  max_products: number;
+  features: string[];
+  commission: number;
+  is_active: boolean;
+  is_free: boolean;
+  is_popular?: boolean;
+  status: 'active' | 'inactive';
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface UserSubscription {
+  id: string;
+  user_id: string;
+  user_name: string;
+  shop_name: string;
+  plan_id: string;
+  plan_name: string;
+  amount_paid: number;
+  products_used: number;
+  max_products: number;
+  start_date: string;
+  end_date: string;
+  status: 'active' | 'expired' | 'cancelled' | 'pending';
+  auto_renewal: boolean;
+  reference_paiement?: string;
+}
 
 export const Subscriptions: React.FC = () => {
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
@@ -15,17 +51,19 @@ export const Subscriptions: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<SubscriptionPlan | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const { showToast } = useToast();
 
   const [formData, setFormData] = useState({
-    name: '',
+    nom: '',
     description: '',
-    price: '',
-    duration_months: '1',
-    max_products: '',
+    prix: '',
+    duree_mois: '1',
+    limite_produits: '',
     features: '',
+    commission: '0',
     is_popular: false,
-    status: 'active' as const
+    is_active: true
   });
 
   useEffect(() => {
@@ -35,17 +73,92 @@ export const Subscriptions: React.FC = () => {
   const loadData = async () => {
     try {
       setLoading(true);
+      setError(null);
       if (activeTab === 'plans') {
-        const plansData = await subscriptionsAPI.getPlans();
-        setPlans(plansData);
+        await loadPlans();
       } else {
-        const subscriptionsData = await subscriptionsAPI.getUserSubscriptions();
-        setSubscriptions(subscriptionsData);
+        await loadSubscriptions();
       }
     } catch (error) {
+      console.error('Erreur lors du chargement des données:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Erreur inconnue';
+      setError(`Impossible de charger les données: ${errorMessage}`);
       showToast('error', 'Erreur', 'Impossible de charger les données');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadPlans = async () => {
+    try {
+      console.log('🔄 Chargement des plans d\'abonnement...');
+      
+      const response = await AdminSubscriptionService.getAllPlans();
+      console.log('📊 Réponse des plans:', response);
+      
+      if (response.success && response.data) {
+        // Transformation des données du backend vers le format du composant
+        const transformedPlans = response.data.map((plan: any) => ({
+          id: plan.id,
+          name: plan.name || plan.nom,
+          slug: plan.slug || '',
+          description: plan.description,
+          price: plan.price || plan.prix,
+          duration_months: plan.duration_months || plan.duree_mois || 1,
+          max_products: plan.max_products || plan.limite_produits,
+          features: Array.isArray(plan.features) ? plan.features : 
+                   typeof plan.features === 'string' ? JSON.parse(plan.features || '[]') : [],
+          commission: plan.commission || 0,
+          is_active: plan.is_active,
+          is_free: plan.is_free || false,
+          is_popular: plan.is_popular || false,
+          status: plan.is_active ? 'active' : 'inactive'
+        }));
+        
+        console.log('✅ Plans transformés:', transformedPlans);
+        setPlans(transformedPlans);
+      } else {
+        throw new Error('Réponse invalide du serveur');
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors du chargement des plans:', error);
+      throw error;
+    }
+  };
+
+  const loadSubscriptions = async () => {
+    try {
+      console.log('🔄 Chargement des abonnements utilisateurs...');
+      
+      const response = await AdminSubscriptionService.getAllUserSubscriptions();
+      console.log('📊 Réponse des abonnements:', response);
+      
+      if (response.success && response.data) {
+        const transformedSubscriptions = response.data.map((sub: any) => ({
+          id: sub.id,
+          user_id: sub.user_id,
+          user_name: sub.user_name || sub.user?.name || 'Utilisateur inconnu',
+          shop_name: sub.shop_name || sub.shop?.name || 'Boutique inconnue',
+          plan_id: sub.plan_id,
+          plan_name: sub.plan_name || sub.plan?.name || 'Plan inconnu',
+          amount_paid: sub.amount_paid || sub.price || 0,
+          products_used: sub.products_used || 0,
+          max_products: sub.max_products || sub.plan?.max_products || 0,
+          start_date: sub.start_date || sub.created_at,
+          end_date: sub.end_date || sub.expires_at,
+          status: sub.status,
+          auto_renewal: sub.auto_renewal || false,
+          reference_paiement: sub.reference_paiement || sub.payment_reference || ''
+        }));
+        
+        console.log('✅ Abonnements transformés:', transformedSubscriptions);
+        setSubscriptions(transformedSubscriptions);
+      } else {
+        throw new Error('Réponse invalide du serveur');
+      }
+    } catch (error) {
+      console.error('❌ Erreur lors du chargement des abonnements:', error);
+      throw error;
     }
   };
 
@@ -54,7 +167,7 @@ export const Subscriptions: React.FC = () => {
     {
       key: 'name',
       title: 'Plan',
-      render: (value: string, record: SubscriptionPlan) => (
+      render: (value: string, record: any) => (
         <div className="flex items-center">
           <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white font-medium ${
             record.is_popular ? 'bg-[#FF6A00]' : 'bg-gray-600'
@@ -79,10 +192,10 @@ export const Subscriptions: React.FC = () => {
     {
       key: 'price',
       title: 'Prix',
-      render: (value: number, record: SubscriptionPlan) => (
+      render: (value: number, record: any) => (
         <div>
           <p className="font-medium text-[#FF6A00]">₣ {value.toLocaleString()}</p>
-          <p className="text-gray-500 text-sm">/{record.duration_months} mois</p>
+          <p className="text-gray-500 text-sm">/{record.duration_months || 1} mois</p>
         </div>
       )
     },
@@ -90,7 +203,9 @@ export const Subscriptions: React.FC = () => {
       key: 'max_products',
       title: 'Limite Produits',
       render: (value: number) => (
-        <span className="font-medium">{value} produits</span>
+        <span className="font-medium">
+          {value === -1 || value === null ? 'Illimité' : `${value} produits`}
+        </span>
       )
     },
     {
@@ -99,7 +214,7 @@ export const Subscriptions: React.FC = () => {
       render: (value: string[]) => (
         <div className="max-w-xs">
           <p className="text-sm text-gray-600">
-            {Array.isArray(value) ? value.slice(0, 2).join(', ') : value}
+            {Array.isArray(value) ? value.slice(0, 2).join(', ') : 'Aucune fonctionnalité'}
             {Array.isArray(value) && value.length > 2 && '...'}
           </p>
         </div>
@@ -119,7 +234,7 @@ export const Subscriptions: React.FC = () => {
     {
       key: 'actions',
       title: 'Actions',
-      render: (_: any, record: SubscriptionPlan) => (
+      render: (_: any, record: any) => (
         <div className="flex space-x-2">
           <button
             className="p-1 text-gray-600 hover:text-[#FF6A00]"
@@ -170,22 +285,31 @@ export const Subscriptions: React.FC = () => {
     {
       key: 'products_used',
       title: 'Utilisation',
-      render: (value: number, record: UserSubscription) => (
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-sm font-medium">{value}/{record.max_products}</span>
-            <span className="text-sm text-gray-500">
-              {Math.round((value / record.max_products) * 100)}%
-            </span>
+      render: (value: number, record: UserSubscription) => {
+        const maxProducts = record.max_products;
+        const percentage = maxProducts > 0 ? Math.round((value / maxProducts) * 100) : 0;
+        
+        return (
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-sm font-medium">
+                {value}/{maxProducts === -1 ? '∞' : maxProducts}
+              </span>
+              <span className="text-sm text-gray-500">
+                {maxProducts === -1 ? '∞' : `${percentage}%`}
+              </span>
+            </div>
+            {maxProducts > 0 && (
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-[#FF6A00] h-2 rounded-full" 
+                  style={{ width: `${Math.min(percentage, 100)}%` }}
+                ></div>
+              </div>
+            )}
           </div>
-          <div className="w-full bg-gray-200 rounded-full h-2">
-            <div 
-              className="bg-[#FF6A00] h-2 rounded-full" 
-              style={{ width: `${Math.min((value / record.max_products) * 100, 100)}%` }}
-            ></div>
-          </div>
-        </div>
-      )
+        );
+      }
     },
     {
       key: 'end_date',
@@ -215,7 +339,7 @@ export const Subscriptions: React.FC = () => {
           cancelled: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Annulé' },
           pending: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'En attente' }
         };
-        const config = statusConfig[value as keyof typeof statusConfig];
+        const config = statusConfig[value as keyof typeof statusConfig] || statusConfig.pending;
         
         return (
           <div className="flex items-center space-x-2">
@@ -230,6 +354,37 @@ export const Subscriptions: React.FC = () => {
           </div>
         );
       }
+    },
+    {
+      key: 'actions',
+      title: 'Actions',
+      render: (_: any, record: UserSubscription) => (
+        <div className="flex space-x-2">
+          <button
+            className="p-1 text-gray-600 hover:text-green-600"
+            onClick={() => reactivateSubscription(record.id)}
+            title="Réactiver"
+            disabled={record.status === 'active'}
+          >
+            <CheckCircle size={16} />
+          </button>
+          <button
+            className="p-1 text-gray-600 hover:text-red-600"
+            onClick={() => cancelSubscription(record.id)}
+            title="Annuler"
+            disabled={record.status === 'cancelled'}
+          >
+            <XCircle size={16} />
+          </button>
+          <button
+            className="p-1 text-gray-600 hover:text-blue-600"
+            onClick={() => extendSubscription(record.id)}
+            title="Prolonger"
+          >
+            <RefreshCw size={16} />
+          </button>
+        </div>
+      )
     }
   ];
 
@@ -238,40 +393,52 @@ export const Subscriptions: React.FC = () => {
     
     try {
       const planData = {
-        ...formData,
-        price: parseFloat(formData.price),
-        duration_months: parseInt(formData.duration_months),
-        max_products: parseInt(formData.max_products),
-        features: formData.features.split(',').map(f => f.trim()).filter(f => f)
+        name: formData.nom,
+        description: formData.description,
+        price: parseFloat(formData.prix),
+        duration_months: parseInt(formData.duree_mois),
+        max_products: parseInt(formData.limite_produits),
+        features: formData.features.split(',').map(f => f.trim()).filter(f => f),
+        commission: parseFloat(formData.commission),
+        is_active: formData.is_active,
+        is_popular: formData.is_popular
       };
 
       if (selectedPlan) {
-        await subscriptionsAPI.updatePlan(selectedPlan.id, planData);
-        showToast('success', 'Plan modifié', 'Le plan d\'abonnement a été mis à jour');
+        // Mise à jour du plan
+        const response = await AdminSubscriptionService.updatePlan(selectedPlan.id, planData);
+        if (response.success) {
+          showToast('success', 'Succès', 'Plan mis à jour avec succès');
+        }
       } else {
-        await subscriptionsAPI.createPlan(planData);
-        showToast('success', 'Plan créé', 'Le nouveau plan d\'abonnement a été créé');
+        // Création du plan
+        const response = await AdminSubscriptionService.createPlan(planData);
+        if (response.success) {
+          showToast('success', 'Succès', 'Plan créé avec succès');
+        }
       }
       
       setIsModalOpen(false);
       resetForm();
       loadData();
     } catch (error) {
+      console.error('Erreur lors de la sauvegarde:', error);
       showToast('error', 'Erreur', 'Impossible de sauvegarder le plan');
     }
   };
 
-  const editPlan = (plan: SubscriptionPlan) => {
+  const editPlan = (plan: any) => {
     setSelectedPlan(plan);
     setFormData({
-      name: plan.name,
-      description: plan.description,
-      price: plan.price.toString(),
-      duration_months: plan.duration_months.toString(),
-      max_products: plan.max_products.toString(),
-      features: Array.isArray(plan.features) ? plan.features.join(', ') : plan.features,
-      is_popular: plan.is_popular,
-      status: plan.status
+      nom: plan.name || '',
+      description: plan.description || '',
+      prix: plan.price?.toString() || '',
+      duree_mois: plan.duration_months?.toString() || '1',
+      limite_produits: plan.max_products?.toString() || '',
+      features: Array.isArray(plan.features) ? plan.features.join(', ') : '',
+      commission: plan.commission?.toString() || '0',
+      is_popular: plan.is_popular || false,
+      is_active: plan.status === 'active'
     });
     setIsModalOpen(true);
   };
@@ -282,30 +449,82 @@ export const Subscriptions: React.FC = () => {
     }
 
     try {
-      await subscriptionsAPI.deletePlan(planId);
-      setPlans(plans.filter(plan => plan.id !== planId));
-      showToast('success', 'Plan supprimé', 'Le plan d\'abonnement a été supprimé');
+      const response = await AdminSubscriptionService.deletePlan(planId);
+      if (response.success) {
+        showToast('success', 'Succès', 'Plan supprimé avec succès');
+        setPlans(plans.filter(plan => plan.id !== planId));
+      }
     } catch (error) {
+      console.error('Erreur lors de la suppression:', error);
       showToast('error', 'Erreur', 'Impossible de supprimer le plan');
+    }
+  };
+
+  const cancelSubscription = async (subscriptionId: string) => {
+    if (!window.confirm('Êtes-vous sûr de vouloir annuler cet abonnement ?')) {
+      return;
+    }
+
+    try {
+      const response = await AdminSubscriptionService.cancelSubscription(subscriptionId, 'Annulation administrative');
+      if (response.success) {
+        showToast('success', 'Succès', 'Abonnement annulé avec succès');
+        loadSubscriptions();
+      }
+    } catch (error) {
+      console.error('Erreur lors de l\'annulation:', error);
+      showToast('error', 'Erreur', 'Impossible d\'annuler l\'abonnement');
+    }
+  };
+
+  const reactivateSubscription = async (subscriptionId: string) => {
+    try {
+      const response = await AdminSubscriptionService.reactivateSubscription(subscriptionId);
+      if (response.success) {
+        showToast('success', 'Succès', 'Abonnement réactivé avec succès');
+        loadSubscriptions();
+      }
+    } catch (error) {
+      console.error('Erreur lors de la réactivation:', error);
+      showToast('error', 'Erreur', 'Impossible de réactiver l\'abonnement');
+    }
+  };
+
+  const extendSubscription = async (subscriptionId: string) => {
+    const days = prompt('Nombre de jours à ajouter :');
+    if (!days || isNaN(parseInt(days))) return;
+
+    try {
+      const response = await AdminSubscriptionService.extendSubscription(subscriptionId, {
+        days: parseInt(days)
+      });
+      if (response.success) {
+        showToast('success', 'Succès', 'Abonnement prolongé avec succès');
+        loadSubscriptions();
+      }
+    } catch (error) {
+      console.error('Erreur lors de la prolongation:', error);
+      showToast('error', 'Erreur', 'Impossible de prolonger l\'abonnement');
     }
   };
 
   const resetForm = () => {
     setFormData({
-      name: '',
+      nom: '',
       description: '',
-      price: '',
-      duration_months: '1',
-      max_products: '',
+      prix: '',
+      duree_mois: '1',
+      limite_produits: '',
       features: '',
+      commission: '0',
       is_popular: false,
-      status: 'active'
+      is_active: true
     });
     setSelectedPlan(null);
   };
 
   const filteredData = activeTab === 'plans' 
-    ? plans.filter(plan => plan.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    ? plans.filter(plan => plan.name?.toLowerCase().includes(searchTerm.toLowerCase()))
     : subscriptions.filter(sub => 
         sub.user_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         sub.shop_name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -313,23 +532,62 @@ export const Subscriptions: React.FC = () => {
 
   const getStats = () => {
     if (activeTab === 'plans') {
+      const activePlans = plans.filter(p => p.status === 'active');
+      const popularPlans = plans.filter(p => p.is_popular);
+      const avgPrice = plans.length > 0 ? plans.reduce((sum, p) => sum + (p.price || 0), 0) / plans.length : 0;
+
       return {
         total: plans.length,
-        active: plans.filter(p => p.status === 'active').length,
-        popular: plans.filter(p => p.is_popular).length,
-        avgPrice: plans.length > 0 ? plans.reduce((sum, p) => sum + p.price, 0) / plans.length : 0
+        active: activePlans.length,
+        popular: popularPlans.length,
+        avgPrice: Math.round(avgPrice)
       };
     } else {
+      const activeSubscriptions = subscriptions.filter(s => s.status === 'active');
+      const expiredSubscriptions = subscriptions.filter(s => s.status === 'expired');
+      const revenue = subscriptions.reduce((sum, s) => sum + (s.amount_paid || 0), 0);
+
       return {
         total: subscriptions.length,
-        active: subscriptions.filter(s => s.status === 'active').length,
-        expired: subscriptions.filter(s => s.status === 'expired').length,
-        revenue: subscriptions.reduce((sum, s) => sum + s.amount_paid, 0)
+        active: activeSubscriptions.length,
+        expired: expiredSubscriptions.length,
+        revenue: revenue
       };
     }
   };
 
   const stats = getStats();
+
+  // Affichage d'erreur si nécessaire
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-900">Gestion des Abonnements</h1>
+        </div>
+        
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6">
+          <div className="flex items-center">
+            <AlertCircle className="h-6 w-6 text-red-600 mr-3" />
+            <div>
+              <h3 className="text-lg font-medium text-red-900">Erreur de chargement</h3>
+              <p className="text-red-700 mt-1">{error}</p>
+              <Button 
+                onClick={() => {
+                  setError(null);
+                  loadData();
+                }}
+                className="mt-3"
+                size="sm"
+              >
+                Réessayer
+              </Button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -494,8 +752,8 @@ export const Subscriptions: React.FC = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             label="Nom du plan"
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            value={formData.nom}
+            onChange={(e) => setFormData({ ...formData, nom: e.target.value })}
             placeholder="ex: Plan Premium"
             required
           />
@@ -518,8 +776,8 @@ export const Subscriptions: React.FC = () => {
             <Input
               label="Prix (₣)"
               type="number"
-              value={formData.price}
-              onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+              value={formData.prix}
+              onChange={(e) => setFormData({ ...formData, prix: e.target.value })}
               placeholder="50000"
               required
             />
@@ -529,8 +787,8 @@ export const Subscriptions: React.FC = () => {
                 Durée (mois)
               </label>
               <select
-                value={formData.duration_months}
-                onChange={(e) => setFormData({ ...formData, duration_months: e.target.value })}
+                value={formData.duree_mois}
+                onChange={(e) => setFormData({ ...formData, duree_mois: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
                 required
               >
@@ -542,14 +800,27 @@ export const Subscriptions: React.FC = () => {
             </div>
           </div>
 
-          <Input
-            label="Limite de produits"
-            type="number"
-            value={formData.max_products}
-            onChange={(e) => setFormData({ ...formData, max_products: e.target.value })}
-            placeholder="100"
-            required
-          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Input
+              label="Limite de produits (-1 pour illimité)"
+              type="number"
+              value={formData.limite_produits}
+              onChange={(e) => setFormData({ ...formData, limite_produits: e.target.value })}
+              placeholder="-1"
+              required
+            />
+            
+            <Input
+              label="Commission (%)"
+              type="number"
+              step="0.01"
+              min="0"
+              max="100"
+              value={formData.commission}
+              onChange={(e) => setFormData({ ...formData, commission: e.target.value })}
+              placeholder="0"
+            />
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -580,8 +851,8 @@ export const Subscriptions: React.FC = () => {
                 Statut
               </label>
               <select
-                value={formData.status}
-                onChange={(e) => setFormData({ ...formData, status: e.target.value as 'active' | 'inactive' })}
+                value={formData.is_active ? 'active' : 'inactive'}
+                onChange={(e) => setFormData({ ...formData, is_active: e.target.value === 'active' })}
                 className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
               >
                 <option value="active">Actif</option>

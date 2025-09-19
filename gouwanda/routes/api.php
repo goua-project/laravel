@@ -17,6 +17,8 @@ use App\Http\Controllers\Api\CommandeController;
 use App\Http\Controllers\Api\AdminCommandeController;
 use App\Http\Controllers\Api\AdminProduitController;
 use App\Http\Controllers\BoutiqueTrendsController;
+use App\Http\Controllers\Api\AdminSubscriptionController;
+
 
 /*
 |--------------------------------------------------------------------------
@@ -156,6 +158,11 @@ Route::prefix('boutiques')->group(function () {
         });
     });
 });
+
+// PUBLIC
+Route::get('boutiques/stats/{id}/dashboard', [BoutiqueStatsController::class, 'getDashboardStats'])
+    ->name('boutique.stats.dashboard');
+
 
 Route::get('/boutiques/stats/{id}/view-count', [BoutiqueStatsController::class, 'getViewCount'])
     ->middleware('auth:sanctum');
@@ -355,3 +362,97 @@ Route::middleware(['auth:sanctum'])->group(function () {
     });
     */
 });
+
+// routes/api.php - Version temporaire sans authentification
+Route::prefix('admin')->group(function () {
+    Route::prefix('plans')->group(function () {
+        Route::get('/', [PlanAbonnementController::class, 'adminIndex']);
+        Route::post('/', [PlanAbonnementController::class, 'adminStore']);
+        Route::get('/{id}', [PlanAbonnementController::class, 'adminShow']);
+        Route::put('/{id}', [PlanAbonnementController::class, 'adminUpdate']);
+        Route::delete('/{id}', [PlanAbonnementController::class, 'adminDestroy']);
+        Route::patch('/{id}/toggle-status', [PlanAbonnementController::class, 'adminToggleStatus']);
+    });
+});
+
+
+
+// ==================== GESTION DES PLANS D'ABONNEMENT ====================
+
+// Obtenir tous les plans d'abonnement
+Route::get('/admin/subscription-plans', [AdminSubscriptionController::class, 'getAllPlans']);
+
+// Obtenir un plan d'abonnement spécifique
+Route::get('/admin/subscription-plans/{id}', [AdminSubscriptionController::class, 'getPlan']);
+
+// Créer un nouveau plan d'abonnement
+Route::post('/admin/subscription-plans', [AdminSubscriptionController::class, 'createPlan']);
+
+// Mettre à jour un plan d'abonnement
+Route::put('/admin/subscription-plans/{id}', [AdminSubscriptionController::class, 'updatePlan']);
+
+// Supprimer un plan d'abonnement
+Route::delete('/admin/subscription-plans/{id}', [AdminSubscriptionController::class, 'deletePlan']);
+
+// Activer/Désactiver un plan d'abonnement
+Route::patch('/admin/subscription-plans/{id}/toggle', [AdminSubscriptionController::class, 'togglePlanStatus']);
+
+// Obtenir les métriques de performance des plans
+Route::get('/admin/subscription-plans/metrics', [AdminSubscriptionController::class, 'getPlanMetrics']);
+
+// Envoyer une notification à tous les abonnés d'un plan
+Route::post('/admin/subscription-plans/{id}/notify', [AdminSubscriptionController::class, 'notifyPlanSubscribers']);
+
+// ==================== GESTION DES ABONNEMENTS UTILISATEURS ====================
+
+// Obtenir tous les abonnements utilisateurs (avec pagination et filtres)
+Route::get('/admin/user-subscriptions', [AdminSubscriptionController::class, 'getAllUserSubscriptions']);
+
+// Obtenir les détails d'un abonnement spécifique
+Route::get('/admin/user-subscriptions/{id}', [AdminSubscriptionController::class, 'getSubscriptionDetails']);
+
+// Créer un abonnement manuel pour un utilisateur
+Route::post('/admin/user-subscriptions/manual', [AdminSubscriptionController::class, 'createManualSubscription']);
+
+// Annuler un abonnement
+Route::patch('/admin/user-subscriptions/{id}/cancel', [AdminSubscriptionController::class, 'cancelSubscription']);
+
+// Réactiver un abonnement
+Route::patch('/admin/user-subscriptions/{id}/reactivate', [AdminSubscriptionController::class, 'reactivateSubscription']);
+
+// Prolonger un abonnement
+Route::patch('/admin/user-subscriptions/{id}/extend', [AdminSubscriptionController::class, 'extendSubscription']);
+
+// Changer le plan d'un abonnement existant
+Route::patch('/admin/user-subscriptions/{id}/change-plan', [AdminSubscriptionController::class, 'changeSubscriptionPlan']);
+
+// Obtenir les abonnements d'un utilisateur spécifique
+Route::get('/admin/users/{userId}/subscriptions', [AdminSubscriptionController::class, 'getUserSubscriptions']);
+
+// Rechercher des abonnements (avec filtres avancés)
+Route::get('/admin/user-subscriptions/search', [AdminSubscriptionController::class, 'searchSubscriptions']);
+
+// Obtenir les abonnements expirants
+Route::get('/admin/user-subscriptions/expiring', [AdminSubscriptionController::class, 'getExpiringSubscriptions']);
+
+// Envoyer des rappels d'expiration
+Route::post('/admin/user-subscriptions/send-expiration-reminders', [AdminSubscriptionController::class, 'sendExpirationReminders']);
+
+// ==================== STATISTIQUES ET ANALYTICS ====================
+
+// Obtenir les statistiques générales des abonnements
+Route::get('/admin/subscription-stats', [AdminSubscriptionController::class, 'getSubscriptionStats']);
+
+// Obtenir les revenus des abonnements par période
+Route::get('/admin/subscription-revenue', [AdminSubscriptionController::class, 'getSubscriptionRevenue']);
+
+// ==================== EXPORT ET RAPPORTS ====================
+
+// Exporter les données d'abonnements
+Route::get('/admin/subscription-export', [AdminSubscriptionController::class, 'exportSubscriptions']);
+
+// Générer un rapport d'abonnements
+Route::get('/admin/subscription-reports', [AdminSubscriptionController::class, 'generateSubscriptionReport']);
+
+// ==================== ROUTES GROUPÉES AVEC PRÉFIXE ====================
+// Alternative: Vous pouvez aussi grouper toutes ces routes comme ceci:

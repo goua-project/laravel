@@ -44,114 +44,98 @@ class BoutiqueStatsController extends Controller
     /**
      * Obtenir les statistiques du dashboard pour une boutique avec gestion d'erreur renforcée
      */
-    public function getDashboardStats(Request $request, $id)
-    {
-        try {
-            // Validation de l'ID
-            if (!is_numeric($id) || $id <= 0) {
-                Log::warning('ID de boutique invalide pour getDashboardStats', ['id' => $id]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'ID de boutique invalide',
-                    'data' => $this->getEmptyStats()
-                ], 400);
-            }
+   public function getDashboardStats(Request $request, $id)
+{
+    try {
+        // Validation de l'ID
+        if (!is_numeric($id) || $id <= 0) {
+            Log::warning('ID de boutique invalide pour getDashboardStats', ['id' => $id]);
+            return response()->json([
+                'success' => false,
+                'message' => 'ID de boutique invalide',
+                'data' => $this->getEmptyStats()
+            ], 400);
+        }
 
-            // Vérifier l'authentification
-            $user = $request->user();
-            if (!$user) {
-                Log::warning('Utilisateur non authentifié pour getDashboardStats', ['id' => $id]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Authentification requise',
-                    'data' => $this->getEmptyStats()
-                ], 401);
-            }
+        // Vérifier que la boutique existe
+        $boutique = Boutique::find($id);
+        if (!$boutique) {
+            Log::warning('Boutique non trouvée', ['boutique_id' => $id]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Boutique non trouvée',
+                'data' => $this->getEmptyStats()
+            ], 404);
+        }
 
-            // Vérifier que l'utilisateur a accès à cette boutique
-            $boutique = $user->boutiques()->where('id', $id)->first();
-            if (!$boutique) {
-                Log::warning('Boutique non trouvée ou accès non autorisé', [
-                    'user_id' => $user->id,
-                    'boutique_id' => $id
-                ]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Boutique non trouvée ou accès non autorisé',
-                    'data' => $this->getEmptyStats()
-                ], 404);
-            }
-
-            // Validation de la période
-            $period = $request->get('period', 'month');
-            $validPeriods = ['today', 'week', 'month', 'year'];
-            if (!in_array($period, $validPeriods)) {
-                Log::warning('Période invalide pour getDashboardStats', [
-                    'period' => $period,
-                    'valid_periods' => $validPeriods
-                ]);
-                $period = 'month';
-            }
-
-            Log::info('Récupération des statistiques dashboard', [
-                'boutique_id' => $boutique->id,
-                'boutique_name' => $boutique->nom,
+        // Validation de la période
+        $period = $request->get('period', 'month');
+        $validPeriods = ['today', 'week', 'month', 'year'];
+        if (!in_array($period, $validPeriods)) {
+            Log::warning('Période invalide pour getDashboardStats', [
                 'period' => $period,
-                'user_id' => $user->id
+                'valid_periods' => $validPeriods
             ]);
+            $period = 'month';
+        }
 
-            // Utiliser le service pour obtenir les statistiques
-            $stats = $this->statsService->getViewStats($boutique, $period);
+        Log::info('Récupération des statistiques dashboard (publique)', [
+            'boutique_id' => $boutique->id,
+            'boutique_name' => $boutique->nom,
+            'period' => $period,
+        ]);
 
-            // Vérifier que les statistiques sont valides
-            if (!is_array($stats)) {
-                Log::error('Statistiques invalides retournées par le service', [
-                    'boutique_id' => $boutique->id,
-                    'stats' => $stats
-                ]);
-                $stats = $this->getEmptyStats();
-            }
+        // Utiliser le service pour obtenir les statistiques
+        $stats = $this->statsService->getViewStats($boutique, $period);
 
-            // S'assurer que toutes les clés requises sont présentes
-            $stats = array_merge($this->getEmptyStats(), $stats);
-
-            Log::info('Statistiques dashboard récupérées avec succès', [
+        // Vérifier que les statistiques sont valides
+        if (!is_array($stats)) {
+            Log::error('Statistiques invalides retournées par le service', [
                 'boutique_id' => $boutique->id,
                 'stats' => $stats
             ]);
-
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'total_views' => (int) $stats['total_views'],
-                    'previous_views' => (int) $stats['previous_views'],
-                    'growth_rate' => (float) $stats['growth'],
-                    'unique_views' => (int) $stats['unique_views']
-                ],
-                'meta' => [
-                    'boutique_id' => $boutique->id,
-                    'boutique_name' => $boutique->nom,
-                    'period' => $period,
-                    'generated_at' => now()->toISOString()
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Erreur lors de la récupération des statistiques dashboard', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'user_id' => $request->user()?->id
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Erreur interne du serveur lors de la récupération des statistiques',
-                'error' => config('app.debug') ? $e->getMessage() : 'Une erreur est survenue',
-                'data' => $this->getEmptyStats()
-            ], 500);
+            $stats = $this->getEmptyStats();
         }
+
+        // S'assurer que toutes les clés requises sont présentes
+        $stats = array_merge($this->getEmptyStats(), $stats);
+
+        Log::info('Statistiques dashboard récupérées avec succès (publique)', [
+            'boutique_id' => $boutique->id,
+            'stats' => $stats
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'total_views'    => (int) $stats['total_views'],
+                'previous_views' => (int) $stats['previous_views'],
+                'growth_rate'    => (float) $stats['growth'],
+                'unique_views'   => (int) $stats['unique_views']
+            ],
+            'meta' => [
+                'boutique_id'   => $boutique->id,
+                'boutique_name' => $boutique->nom,
+                'period'        => $period,
+                'generated_at'  => now()->toISOString()
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Erreur lors de la récupération des statistiques dashboard (publique)', [
+            'id'    => $id,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Erreur interne du serveur lors de la récupération des statistiques',
+            'error'   => config('app.debug') ? $e->getMessage() : 'Une erreur est survenue',
+            'data'    => $this->getEmptyStats()
+        ], 500);
     }
+}
 
     /**
      * Obtenir le nombre de vues public d'une boutique (sans authentification) - CORRIGÉ

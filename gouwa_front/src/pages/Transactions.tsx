@@ -1,20 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
+import { Input } from '../components/ui/Input'; 
 import { Table } from '../components/ui/Table';
 import { useToast } from '../components/ui/Toast';
-import { transactionsAPI, ProductTransaction, TransactionSummary } from '../services/api';
+import SubscriptionService from '../services/SubscriptionService';
+import BoutiqueCommandeService from '../services/BoutiqueCommandeService';
 import { Search, Filter, RefreshCw, DollarSign, TrendingUp, CreditCard, AlertCircle, CheckCircle, XCircle, RotateCcw } from 'lucide-react';
 
-export const Transactions: React.FC = () => {
-  const [transactions, setTransactions] = useState<ProductTransaction[]>([]);
-  const [summary, setSummary] = useState<TransactionSummary | null>(null);
+export const Transactions = () => {
+  const [commandes, setCommandes] = useState([]);
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('all');
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('all');
   const [loading, setLoading] = useState(true);
   const { showToast } = useToast();
+
+  // Récupérer l'ID de la boutique depuis le contexte ou les paramètres
+  const boutiqueId = 1; // À remplacer par la vraie logique de récupération
 
   useEffect(() => {
     loadTransactions();
@@ -24,9 +29,25 @@ export const Transactions: React.FC = () => {
   const loadTransactions = async () => {
     try {
       setLoading(true);
-      const data = await transactionsAPI.getTransactions();
-      setTransactions(data);
+      
+      // Charger les commandes de la boutique
+      const commandesResult = await BoutiqueCommandeService.listerCommandesBoutique(boutiqueId);
+      if (commandesResult.success) {
+        setCommandes(commandesResult.data || []);
+      } else {
+        showToast('error', 'Erreur', commandesResult.message);
+      }
+
+      // Charger l'historique des abonnements
+      try {
+        const subscriptionsData = await SubscriptionService.getSubscriptionHistory();
+        setSubscriptions(subscriptionsData || []);
+      } catch (error) {
+        console.error('Erreur chargement abonnements:', error);
+      }
+      
     } catch (error) {
+      console.error('Erreur lors du chargement des transactions:', error);
       showToast('error', 'Erreur', 'Impossible de charger les transactions');
     } finally {
       setLoading(false);
@@ -35,127 +56,209 @@ export const Transactions: React.FC = () => {
 
   const loadSummary = async () => {
     try {
-      const data = await transactionsAPI.getTransactionSummary();
-      setSummary(data);
+      // Charger les statistiques de la boutique
+      const statsResult = await BoutiqueCommandeService.obtenirStatistiquesBoutique(boutiqueId);
+      if (statsResult.success) {
+        const stats = statsResult.data;
+        
+        // Calculer les données de résumé à partir des statistiques
+        const commandesPayees = commandes.filter(c => ['payee', 'livree'].includes(c.statut));
+        const aujourdhui = new Date().toISOString().split('T')[0];
+        const commandesAujourdhui = commandesPayees.filter(c => 
+          new Date(c.created_at).toISOString().split('T')[0] === aujourdhui
+        );
+
+        // Générer l'évolution des transactions
+        const evolution = BoutiqueCommandeService.calculerEvolutionCommandes(commandes, 7);
+        
+        // Analyser les méthodes de paiement
+        const methodesMap = new Map();
+        commandes.forEach(commande => {
+          const methode = commande.methode_paiement || 'kaliapay';
+          methodesMap.set(methode, (methodesMap.get(methode) || 0) + 1);
+        });
+
+        const totalCommandes = commandes.length;
+        const topPaymentMethods = Array.from(methodesMap.entries()).map(([method, count]) => ({
+          method,
+          count,
+          percentage: totalCommandes > 0 ? ((count / totalCommandes) * 100).toFixed(1) : 0
+        }));
+
+        const summaryData = {
+          total_transactions: stats.total_commandes || totalCommandes,
+          total_revenue: stats.chiffre_affaires || commandesPayees.reduce((sum, c) => sum + parseFloat(c.montant_total || 0), 0),
+          total_commission: stats.commissions_totales || (stats.chiffre_affaires * 0.05), // 5% de commission par défaut
+          pending_amount: commandes
+            .filter(c => c.statut === 'en_attente')
+            .reduce((sum, c) => sum + parseFloat(c.montant_total || 0), 0),
+          completed_today: commandesAujourdhui.length,
+          monthly_growth: stats.croissance_mensuelle || 12.5,
+          transaction_trends: evolution.map(item => ({
+            date: item.date_formatee,
+            amount: item.chiffre_affaires,
+            count: item.commandes
+          })),
+          top_payment_methods: topPaymentMethods
+        };
+
+        setSummary(summaryData);
+      }
     } catch (error) {
+      console.error('Erreur lors du chargement du résumé:', error);
       showToast('error', 'Erreur', 'Impossible de charger le résumé');
     }
   };
 
-  const updateTransactionStatus = async (transactionId: string, status: string) => {
+  const updateTransactionStatus = async (commandeId, statut) => {
     try {
-      await transactionsAPI.updateTransactionStatus(transactionId, status);
-      setTransactions(transactions.map(transaction => 
-        transaction.id === transactionId 
-          ? { ...transaction, status: status as ProductTransaction['status'] }
-          : transaction
-      ));
+      const result = await BoutiqueCommandeService.mettreAJourStatutCommande(boutiqueId, commandeId, statut);
       
-      const statusLabels = {
-        completed: 'complétée',
-        failed: 'échouée',
-        refunded: 'remboursée'
-      };
-      
-      showToast('success', 'Statut mis à jour', 
-        `La transaction a été marquée comme ${statusLabels[status as keyof typeof statusLabels]}`);
+      if (result.success) {
+        setCommandes(commandes.map(commande => 
+          commande.id === commandeId 
+            ? { ...commande, statut: statut }
+            : commande
+        ));
+        
+        const statusLabels = {
+          'livree': 'livrée',
+          'annulee': 'annulée',
+          'payee': 'payée',
+          'en_cours': 'en cours'
+        };
+        
+        showToast('success', 'Statut mis à jour', 
+          `La commande a été marquée comme ${statusLabels[statut]}`);
+      } else {
+        showToast('error', 'Erreur', result.message);
+      }
     } catch (error) {
+      console.error('Erreur mise à jour statut:', error);
       showToast('error', 'Erreur', 'Impossible de mettre à jour le statut');
     }
   };
 
-  const refundTransaction = async (transactionId: string) => {
+  const refundTransaction = async (commandeId) => {
     const reason = window.prompt('Raison du remboursement:');
     if (!reason) return;
 
     try {
-      await transactionsAPI.refundTransaction(transactionId, reason);
-      setTransactions(transactions.map(transaction => 
-        transaction.id === transactionId 
-          ? { ...transaction, status: 'refunded' }
-          : transaction
-      ));
-      showToast('success', 'Remboursement effectué', 'La transaction a été remboursée');
+      // Marquer la commande comme annulée (équivalent du remboursement)
+      const result = await BoutiqueCommandeService.mettreAJourStatutCommande(boutiqueId, commandeId, 'annulee');
+      
+      if (result.success) {
+        setCommandes(commandes.map(commande => 
+          commande.id === commandeId 
+            ? { ...commande, statut: 'annulee' }
+            : commande
+        ));
+        showToast('success', 'Remboursement effectué', 'La commande a été annulée');
+      } else {
+        showToast('error', 'Erreur', result.message);
+      }
     } catch (error) {
+      console.error('Erreur remboursement:', error);
       showToast('error', 'Erreur', 'Impossible d\'effectuer le remboursement');
     }
   };
 
-  const getPaymentMethodIcon = (method: string) => {
+  const getPaymentMethodIcon = (method) => {
     switch (method) {
-      case 'card':
+      case 'kaliapay':
+      case 'en_ligne':
         return <CreditCard size={16} className="text-blue-600" />;
-      case 'mobile_money':
-        return <span className="text-green-600 font-bold text-sm">MM</span>;
-      case 'bank_transfer':
-        return <span className="text-purple-600 font-bold text-sm">BT</span>;
-      case 'cash':
+      case 'a_la_livraison':
+        return <span className="text-green-600 font-bold text-sm">💰</span>;
+      case 'virement':
+        return <span className="text-purple-600 font-bold text-sm">🏦</span>;
+      case 'especes':
         return <span className="text-gray-600 font-bold text-sm">💵</span>;
+      case 'cheque':
+        return <span className="text-orange-600 font-bold text-sm">📋</span>;
       default:
         return <CreditCard size={16} className="text-gray-600" />;
     }
   };
 
-  const getPaymentMethodLabel = (method: string) => {
-    const labels = {
-      card: 'Carte bancaire',
-      mobile_money: 'Mobile Money',
-      bank_transfer: 'Virement bancaire',
-      cash: 'Espèces'
+  const getPaymentMethodLabel = (method) => {
+    return BoutiqueCommandeService.getLibelleMethodePaiement(method);
+  };
+
+  const getStatusConfig = (status) => {
+    const configs = {
+      'en_attente': { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'En attente', icon: AlertCircle },
+      'payee': { bg: 'bg-blue-100', text: 'text-blue-800', label: 'Payée', icon: CheckCircle },
+      'en_cours': { bg: 'bg-orange-100', text: 'text-orange-800', label: 'En cours', icon: AlertCircle },
+      'livree': { bg: 'bg-green-100', text: 'text-green-800', label: 'Livrée', icon: CheckCircle },
+      'annulee': { bg: 'bg-red-100', text: 'text-red-800', label: 'Annulée', icon: XCircle }
     };
-    return labels[method as keyof typeof labels] || method;
+    return configs[status] || { bg: 'bg-gray-100', text: 'text-gray-800', label: status, icon: AlertCircle };
   };
 
   const columns = [
     {
-      key: 'reference_number',
+      key: 'reference',
       title: 'Référence',
-      render: (value: string, record: ProductTransaction) => (
+      render: (value, record) => (
         <div>
           <p className="font-medium font-mono text-sm">{value}</p>
-          <p className="text-gray-500 text-xs">{record.transaction_id}</p>
+          <p className="text-gray-500 text-xs">ID: {record.id}</p>
         </div>
       )
     },
     {
-      key: 'product_name',
-      title: 'Produit',
-      render: (value: string, record: ProductTransaction) => (
+      key: 'produits',
+      title: 'Produits',
+      render: (value, record) => (
         <div>
-          <p className="font-medium">{value}</p>
-          <p className="text-gray-500 text-sm">{record.shop_name}</p>
+          <p className="font-medium">
+            {value && value.length > 0 ? 
+              value.map(p => p.nom).join(', ') : 
+              'Produits variés'
+            }
+          </p>
+          <p className="text-gray-500 text-sm">Boutique #{record.boutique_id || boutiqueId}</p>
         </div>
       )
     },
     {
-      key: 'buyer_name',
-      title: 'Acheteur',
-      render: (value: string, record: ProductTransaction) => (
+      key: 'user',
+      title: 'Client',
+      render: (value, record) => (
         <div>
-          <p className="font-medium">{value}</p>
-          <p className="text-gray-500 text-sm">{record.buyer_email}</p>
+          <p className="font-medium">
+            {value ? `${value.prenom || ''} ${value.nom || ''}`.trim() : 'Client inconnu'}
+          </p>
+          <p className="text-gray-500 text-sm">{value?.email || 'Email non disponible'}</p>
         </div>
       )
     },
     {
-      key: 'amount',
+      key: 'montant_total',
       title: 'Montant',
-      render: (value: number, record: ProductTransaction) => (
-        <div>
-          <p className="font-medium">₣ {value.toLocaleString()}</p>
-          <p className="text-gray-500 text-sm">
-            Commission: ₣ {record.commission.toLocaleString()}
-          </p>
-          <p className="text-green-600 text-sm font-medium">
-            Net: ₣ {record.net_amount.toLocaleString()}
-          </p>
-        </div>
-      )
+      render: (value, record) => {
+        const montant = parseFloat(value || 0);
+        const commission = montant * 0.05; // 5% de commission
+        const net = montant - commission;
+        
+        return (
+          <div>
+            <p className="font-medium">{BoutiqueCommandeService.formaterMontant(montant)}</p>
+            <p className="text-gray-500 text-sm">
+              Commission: {BoutiqueCommandeService.formaterMontant(commission)}
+            </p>
+            <p className="text-green-600 text-sm font-medium">
+              Net: {BoutiqueCommandeService.formaterMontant(net)}
+            </p>
+          </div>
+        );
+      }
     },
     {
-      key: 'payment_method',
+      key: 'methode_paiement',
       title: 'Paiement',
-      render: (value: string) => (
+      render: (value) => (
         <div className="flex items-center space-x-2">
           {getPaymentMethodIcon(value)}
           <span className="text-sm">{getPaymentMethodLabel(value)}</span>
@@ -163,16 +266,10 @@ export const Transactions: React.FC = () => {
       )
     },
     {
-      key: 'status',
+      key: 'statut',
       title: 'Statut',
-      render: (value: string, record: ProductTransaction) => {
-        const statusConfig = {
-          pending: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'En attente', icon: AlertCircle },
-          completed: { bg: 'bg-green-100', text: 'text-green-800', label: 'Complétée', icon: CheckCircle },
-          failed: { bg: 'bg-red-100', text: 'text-red-800', label: 'Échouée', icon: XCircle },
-          refunded: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Remboursée', icon: RotateCcw }
-        };
-        const config = statusConfig[value as keyof typeof statusConfig];
+      render: (value, record) => {
+        const config = getStatusConfig(value);
         const IconComponent = config.icon;
         
         return (
@@ -181,32 +278,41 @@ export const Transactions: React.FC = () => {
               <IconComponent size={12} className="mr-1" />
               {config.label}
             </span>
-            {value === 'pending' && (
+            {value === 'en_attente' && (
               <div className="flex space-x-1">
                 <button
-                  onClick={() => updateTransactionStatus(record.id, 'completed')}
-                  className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
-                  title="Marquer comme complétée"
+                  onClick={() => updateTransactionStatus(record.id, 'payee')}
+                  className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                  title="Marquer comme payée"
                 >
                   ✓
                 </button>
                 <button
-                  onClick={() => updateTransactionStatus(record.id, 'failed')}
+                  onClick={() => updateTransactionStatus(record.id, 'annulee')}
                   className="px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700"
-                  title="Marquer comme échouée"
+                  title="Annuler"
                 >
                   ✗
                 </button>
               </div>
             )}
-            {value === 'completed' && (
-              <button
-                onClick={() => refundTransaction(record.id)}
-                className="px-2 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
-                title="Rembourser"
-              >
-                <RotateCcw size={12} />
-              </button>
+            {value === 'payee' && (
+              <div className="flex space-x-1">
+                <button
+                  onClick={() => updateTransactionStatus(record.id, 'livree')}
+                  className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                  title="Marquer comme livrée"
+                >
+                  📦
+                </button>
+                <button
+                  onClick={() => refundTransaction(record.id)}
+                  className="px-2 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+                  title="Rembourser"
+                >
+                  <RotateCcw size={12} />
+                </button>
+              </div>
             )}
           </div>
         );
@@ -215,13 +321,17 @@ export const Transactions: React.FC = () => {
     {
       key: 'created_at',
       title: 'Date',
-      render: (value: string, record: ProductTransaction) => (
+      render: (value, record) => (
         <div>
-          <p className="text-sm font-medium">{new Date(value).toLocaleDateString('fr-FR')}</p>
-          <p className="text-gray-500 text-xs">{new Date(value).toLocaleTimeString('fr-FR')}</p>
-          {record.completed_at && (
+          <p className="text-sm font-medium">
+            {BoutiqueCommandeService.formaterDate(value).split(' ')[0]}
+          </p>
+          <p className="text-gray-500 text-xs">
+            {BoutiqueCommandeService.formaterDate(value).split(' ').slice(1).join(' ')}
+          </p>
+          {record.updated_at && record.updated_at !== value && (
             <p className="text-green-600 text-xs">
-              Complétée: {new Date(record.completed_at).toLocaleTimeString('fr-FR')}
+              Mis à jour: {BoutiqueCommandeService.formaterDate(record.updated_at).split(' ').slice(1).join(' ')}
             </p>
           )}
         </div>
@@ -229,15 +339,30 @@ export const Transactions: React.FC = () => {
     }
   ];
 
-  const filteredTransactions = transactions.filter(transaction => {
-    const matchesSearch = transaction.reference_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         transaction.product_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         transaction.buyer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         transaction.shop_name.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = selectedStatus === 'all' || transaction.status === selectedStatus;
-    const matchesPaymentMethod = selectedPaymentMethod === 'all' || transaction.payment_method === selectedPaymentMethod;
-    return matchesSearch && matchesStatus && matchesPaymentMethod;
+  const filteredTransactions = BoutiqueCommandeService.filtrerCommandes(commandes, {
+    search: searchTerm,
+    statut: selectedStatus === 'all' ? null : selectedStatus,
+    methode_paiement: selectedPaymentMethod === 'all' ? null : selectedPaymentMethod
   });
+
+  const exportTransactions = async () => {
+    try {
+      const filters = {
+        statut: selectedStatus === 'all' ? null : selectedStatus,
+        methode_paiement: selectedPaymentMethod === 'all' ? null : selectedPaymentMethod
+      };
+      
+      const result = await BoutiqueCommandeService.exporterCommandesCSV(boutiqueId, filters);
+      if (result.success) {
+        showToast('success', 'Export réussi', result.message);
+      } else {
+        showToast('error', 'Erreur d\'export', result.message);
+      }
+    } catch (error) {
+      console.error('Erreur export:', error);
+      showToast('error', 'Erreur', 'Impossible d\'exporter les données');
+    }
+  };
 
   const paymentMethodColors = ['#FF6A00', '#1C1C1C', '#10B981', '#3B82F6', '#8B5CF6'];
 
@@ -250,7 +375,7 @@ export const Transactions: React.FC = () => {
             <RefreshCw size={16} className="mr-2" />
             Actualiser
           </Button>
-          <Button variant="outline">
+          <Button variant="outline" onClick={exportTransactions}>
             Exporter
           </Button>
         </div>
@@ -276,7 +401,7 @@ export const Transactions: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Revenus Totaux</p>
-                <p className="text-2xl font-bold text-gray-900">₣ {summary.total_revenue.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">{BoutiqueCommandeService.formaterMontant(summary.total_revenue)}</p>
                 <div className="flex items-center mt-1">
                   <TrendingUp className="h-4 w-4 text-green-500 mr-1" />
                   <span className="text-sm text-green-600">+{summary.monthly_growth.toFixed(1)}% ce mois</span>
@@ -292,7 +417,7 @@ export const Transactions: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">Commissions</p>
-                <p className="text-2xl font-bold text-gray-900">₣ {summary.total_commission.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">{BoutiqueCommandeService.formaterMontant(summary.total_commission)}</p>
                 <p className="text-sm text-gray-600 mt-1">
                   {((summary.total_commission / summary.total_revenue) * 100).toFixed(1)}% du CA
                 </p>
@@ -307,7 +432,7 @@ export const Transactions: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">En Attente</p>
-                <p className="text-2xl font-bold text-gray-900">₣ {summary.pending_amount.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-gray-900">{BoutiqueCommandeService.formaterMontant(summary.pending_amount)}</p>
                 <p className="text-sm text-yellow-600 mt-1">À traiter</p>
               </div>
               <div className="h-12 w-12 bg-yellow-100 rounded-lg flex items-center justify-center">
@@ -329,8 +454,11 @@ export const Transactions: React.FC = () => {
                 <XAxis dataKey="date" />
                 <YAxis yAxisId="left" />
                 <YAxis yAxisId="right" orientation="right" />
-                <Tooltip />
-                <Line yAxisId="left" type="monotone" dataKey="amount" stroke="#FF6A00" strokeWidth={2} name="Montant (₣)" />
+                <Tooltip formatter={(value, name) => [
+                  name === 'amount' ? BoutiqueCommandeService.formaterMontant(value) : value,
+                  name === 'amount' ? 'Montant' : 'Nombre'
+                ]} />
+                <Line yAxisId="left" type="monotone" dataKey="amount" stroke="#FF6A00" strokeWidth={2} name="Montant" />
                 <Line yAxisId="right" type="monotone" dataKey="count" stroke="#1C1C1C" strokeWidth={2} name="Nombre" />
               </LineChart>
             </ResponsiveContainer>
@@ -393,10 +521,11 @@ export const Transactions: React.FC = () => {
               className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
             >
               <option value="all">Tous les statuts</option>
-              <option value="pending">En attente</option>
-              <option value="completed">Complétées</option>
-              <option value="failed">Échouées</option>
-              <option value="refunded">Remboursées</option>
+              <option value="en_attente">En attente</option>
+              <option value="payee">Payées</option>
+              <option value="en_cours">En cours</option>
+              <option value="livree">Livrées</option>
+              <option value="annulee">Annulées</option>
             </select>
           </div>
 
@@ -406,10 +535,12 @@ export const Transactions: React.FC = () => {
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#FF6A00]"
           >
             <option value="all">Toutes les méthodes</option>
-            <option value="card">Carte bancaire</option>
-            <option value="mobile_money">Mobile Money</option>
-            <option value="bank_transfer">Virement bancaire</option>
-            <option value="cash">Espèces</option>
+            <option value="kaliapay">KaliaPay</option>
+            <option value="en_ligne">Paiement en ligne</option>
+            <option value="a_la_livraison">À la livraison</option>
+            <option value="virement">Virement bancaire</option>
+            <option value="especes">Espèces</option>
+            <option value="cheque">Chèque</option>
           </select>
         </div>
 

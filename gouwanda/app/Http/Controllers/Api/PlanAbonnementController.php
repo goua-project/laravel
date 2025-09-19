@@ -13,6 +13,201 @@ use Carbon\Carbon;
 
 class PlanAbonnementController extends Controller
 {
+
+
+     
+    /**
+     * Lister tous les plans (admin)
+     */
+    public function adminIndex()
+    {
+        try {
+            $plans = PlanAbonnement::withCount(['abonnements' => function($query) {
+                $query->where('statut', 'actif');
+            }])->get();
+            
+            return response()->json([
+                'success' => true,
+                'data' => $plans
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la récupération des plans',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Créer un nouveau plan (admin)
+     */
+    public function adminStore(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'nom' => 'required|string|max:255|unique:plan_abonnements',
+                'slug' => 'required|string|max:255|unique:plan_abonnements',
+                'description' => 'nullable|string',
+                'prix' => 'required|numeric|min:0',
+                'duree_mois' => 'required|integer|min:1',
+                'limite_produits' => 'required|integer|min:-1', // -1 pour illimité
+                'features' => 'nullable|array',
+                'commission' => 'required|numeric|min:0|max:100',
+                'is_active' => 'boolean',
+                'is_popular' => 'boolean'
+            ]);
+            
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Données invalides',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+            
+            $plan = PlanAbonnement::create($request->all());
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Plan créé avec succès',
+                'data' => $plan
+            ], 201);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la création du plan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Afficher un plan spécifique (admin)
+     */
+    public function adminShow($id)
+    {
+        try {
+            $plan = PlanAbonnement::with(['abonnements' => function($query) {
+                $query->where('statut', 'actif');
+            }])->findOrFail($id);
+            
+            return response()->json([
+                'success' => true,
+                'data' => $plan
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Plan non trouvé',
+                'error' => $e->getMessage()
+            ], 404);
+        }
+    }
+    
+    /**
+     * Mettre à jour un plan (admin)
+     */
+    public function adminUpdate(Request $request, $id)
+    {
+        try {
+            $plan = PlanAbonnement::findOrFail($id);
+            
+            $validator = Validator::make($request->all(), [
+                'nom' => 'sometimes|required|string|max:255|unique:plan_abonnements,nom,' . $id,
+                'slug' => 'sometimes|required|string|max:255|unique:plan_abonnements,slug,' . $id,
+                'description' => 'nullable|string',
+                'prix' => 'sometimes|required|numeric|min:0',
+                'duree_mois' => 'sometimes|required|integer|min:1',
+                'limite_produits' => 'sometimes|required|integer|min:-1',
+                'features' => 'nullable|array',
+                'commission' => 'sometimes|required|numeric|min:0|max:100',
+                'is_active' => 'boolean',
+                'is_popular' => 'boolean'
+            ]);
+            
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Données invalides',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+            
+            $plan->update($request->all());
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Plan mis à jour avec succès',
+                'data' => $plan
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la mise à jour du plan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Supprimer un plan (admin)
+     */
+    public function adminDestroy($id)
+    {
+        try {
+            $plan = PlanAbonnement::findOrFail($id);
+            
+            // Vérifier si le plan est utilisé par des abonnements actifs
+            if ($plan->abonnements()->where('statut', 'actif')->exists()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Impossible de supprimer ce plan car il est utilisé par des abonnements actifs'
+                ], 422);
+            }
+            
+            $plan->delete();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Plan supprimé avec succès'
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la suppression du plan',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Activer/désactiver un plan (admin)
+     */
+    public function adminToggleStatus($id)
+    {
+        try {
+            $plan = PlanAbonnement::findOrFail($id);
+            $plan->is_active = !$plan->is_active;
+            $plan->save();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Statut du plan mis à jour avec succès',
+                'data' => $plan
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la modification du statut',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
     /**
      * Afficher tous les plans d'abonnement disponibles
      */

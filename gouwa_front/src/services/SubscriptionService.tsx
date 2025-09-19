@@ -34,28 +34,90 @@ class SubscriptionService {
   }
 
   /**
-   * Récupérer tous les plans disponibles
+   * Récupérer tous les plans disponibles (ADMIN)
    */
-  async getAvailablePlans() {
+ async getAvailablePlans() {
+  try {
+    return await this.apiService.request('/admin/plans', {
+      method: 'GET',
+      includeAuth: false, // ← Désactivé temporairement
+    });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des plans:', error);
+    throw error;
+  }
+}
+
+  /**
+   * Créer un nouveau plan (ADMIN)
+   */
+  async createPlan(planData) {
     try {
-      return await this.apiService.request('/plans', {
-        method: 'GET',
-        includeAuth: false, // Les plans peuvent être publics
+      return await this.apiService.request('/admin/plans', {
+        method: 'POST',
+        data: planData,
+        includeAuth: true,
       });
     } catch (error) {
-      console.error('Erreur lors de la récupération des plans:', error);
+      console.error('Erreur lors de la création du plan:', error);
       throw error;
     }
   }
 
   /**
-   * Récupérer un plan spécifique par ID
+   * Mettre à jour un plan (ADMIN)
+   */
+  async updatePlan(planId, planData) {
+    try {
+      return await this.apiService.request(`/admin/plans/${planId}`, {
+        method: 'PUT',
+        data: planData,
+        includeAuth: true,
+      });
+    } catch (error) {
+      console.error('Erreur lors de la mise à jour du plan:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Supprimer un plan (ADMIN)
+   */
+  async deletePlan(planId) {
+    try {
+      return await this.apiService.request(`/admin/plans/${planId}`, {
+        method: 'DELETE',
+        includeAuth: true,
+      });
+    } catch (error) {
+      console.error('Erreur lors de la suppression du plan:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Récupérer tous les abonnements utilisateurs (ADMIN)
+   */
+  async getAllUserSubscriptions() {
+    try {
+      return await this.apiService.request('/admin/subscriptions', {
+        method: 'GET',
+        includeAuth: true,
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération des abonnements utilisateurs:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Récupérer un plan spécifique par ID (PUBLIC)
    */
   async getPlanById(planId) {
     try {
       return await this.apiService.request(`/plans/${planId}`, {
         method: 'GET',
-        includeAuth: false,
+        includeAuth: false, // Route publique
       });
     } catch (error) {
       console.error('Erreur lors de la récupération du plan:', error);
@@ -64,16 +126,31 @@ class SubscriptionService {
   }
 
   /**
-   * Récupérer un plan par slug
+   * Récupérer un plan par slug (PUBLIC)
    */
   async getPlanBySlug(slug) {
     try {
       return await this.apiService.request(`/plans/slug/${slug}`, {
         method: 'GET',
-        includeAuth: false,
+        includeAuth: false, // Route publique
       });
     } catch (error) {
       console.error('Erreur lors de la récupération du plan:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Récupérer les plans publics (pour les utilisateurs non connectés)
+   */
+  async getPublicPlans() {
+    try {
+      return await this.apiService.request('/plans/public', {
+        method: 'GET',
+        includeAuth: false,
+      });
+    } catch (error) {
+      console.error('Erreur lors de la récupération des plans publics:', error);
       throw error;
     }
   }
@@ -85,7 +162,8 @@ class SubscriptionService {
     try {
       return await this.apiService.request('/plans/compare', {
         method: 'POST',
-        data: { plan_ids: planIds }
+        data: { plan_ids: planIds },
+        includeAuth: false, // Peut être public
       });
     } catch (error) {
       console.error('Erreur lors de la comparaison des plans:', error);
@@ -100,7 +178,8 @@ class SubscriptionService {
     try {
       return await this.apiService.request(`/plans/${planId}/calculate-price`, {
         method: 'POST',
-        data: { duree_mois: dureeMois }
+        data: { duree_mois: dureeMois },
+        includeAuth: false,
       });
     } catch (error) {
       console.error('Erreur lors du calcul du prix:', error);
@@ -115,6 +194,7 @@ class SubscriptionService {
     try {
       return await this.apiService.request('/plans/recommendations', {
         method: 'GET',
+        includeAuth: true, // Requiert une authentification pour personnaliser
       });
     } catch (error) {
       console.error('Erreur lors de la récupération des recommandations:', error);

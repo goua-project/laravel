@@ -26,11 +26,13 @@ import { Shops } from './pages/Shops';
 import { UsersPage } from './pages/UsersPage';
 import { TrendingShops as TrendingShopsPage } from './pages/TrendingShops';  
 import { Products } from './pages/Products';
-
 import { EnhancedAnalytics as ReportsPage } from './pages/EnhancedAnalytics';
 
 // Import du composant AdminOrders mis à jour
 import { AdminOrders } from './pages/Orders';
+import { Transactions } from './pages/Transactions';
+// Import du composant Subscriptions
+import { Subscriptions } from './pages/Subscriptions';
 
 function App() {
   return (
@@ -85,8 +87,7 @@ function App() {
                         {/* Gestion des boutiques */}
                         <Route path="shops" element={<Shops />} />
                         
-                        
-                         {/* Gestion des produits */}
+                        {/* Gestion des produits */}
                         <Route path="products" element={<Products />} />
                         
                         {/* Gestion des commandes - Utilise le nouveau composant AdminOrders */}
@@ -98,16 +99,17 @@ function App() {
                         {/* Boutiques tendance */}
                         <Route path="trending-shops" element={<TrendingShopsPage />} />
                         
+                        {/* Gestion des abonnements */}
+                        <Route path="subscriptions" element={<Subscriptions />} />
+                        
                         {/* Commandes invitées */}
                         
                         
                         {/* Modération des avis */}
                         
                         
-                        {/* Gestion des abonnements */}
-                        
-                        
                         {/* Gestion des transactions */}
+                        <Route path="transactions" element={<Transactions />} />
                         
                         
                         {/* Paramètres système */}

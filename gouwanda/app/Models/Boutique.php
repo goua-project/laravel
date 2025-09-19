@@ -37,8 +37,20 @@ class Boutique extends Model
         'monthly_views',
         'weekly_views',
         'daily_views',
-        'logo_url'
+        'logo_url',
+        'products_used',
     ];
+
+
+    
+/**
+ * Retourne le nombre de produits publiés (ou tous les produits si tu veux)
+ */
+public function getProductsUsedAttribute()
+{
+    return $this->produits()->count(); 
+    // ou $this->produits()->published()->count(); si tu veux compter uniquement les produits publiés
+}
 
     /**
      * Relation avec l'utilisateur propriétaire

@@ -36,8 +36,8 @@ const menuItems = [
   { icon: UserX, label: 'Commandes Invitées', path: '/admin/guest-orders' },
   { icon: MessageSquare, label: 'Modération Avis', path: '/admin/reviews' },
   { icon: PieChart, label: 'Analytics Enrichis', path: '/admin/analytics' },
-  { icon: Crown, label: 'Abonnements', path: '/subscriptions' },
-  { icon: CreditCard, label: 'Transactions', path: '/transactions' },
+  { icon: Crown, label: 'Abonnements', path: '/admin/subscriptions' },
+  { icon: CreditCard, label: 'Transactions', path: '/admin/transactions' },
   { icon: Settings, label: 'Paramètres', path: '/settings' },
   { icon: FileText, label: 'Logs', path: '/logs' },
 ];
